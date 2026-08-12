@@ -1,0 +1,4 @@
+timestamp,student_id,engagement_score,status
+2026-08-12T11:15:10,1,80,Engaged
+2026-08-12T11:15:10,2,50,Neutral
+2026-08-12T11:15:10,3,25,Disengaged
