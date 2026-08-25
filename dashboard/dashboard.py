@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import pandas as pd
 import streamlit as st
 
@@ -24,27 +25,73 @@ st.subheader("Classroom Overview")
 
 
 # ---------------------------------------------------
-# Load Engagement Data
+# Database Location
 # ---------------------------------------------------
 
-csv_path = os.path.join(
+db_path = os.path.join(
     os.path.dirname(os.path.dirname(__file__)),
     "data",
-    "engagement.csv"
+    "cems.db"
 )
 
 
-if not os.path.exists(csv_path):
+# ---------------------------------------------------
+# Check Database
+# ---------------------------------------------------
+
+if not os.path.exists(db_path):
 
     st.error(
-        "engagement.csv was not found. "
-        "Please make sure it is inside the data folder."
+        "CEMS database was not found. "
+        "Please run the monitoring system first."
     )
 
     st.stop()
 
 
-data = pd.read_csv(csv_path)
+# ---------------------------------------------------
+# Connect to SQLite
+# ---------------------------------------------------
+
+try:
+
+    connection = sqlite3.connect(db_path)
+
+    data = pd.read_sql_query(
+        """
+        SELECT
+            timestamp,
+            student_id,
+            engagement_score,
+            status
+        FROM engagement_records
+        ORDER BY id ASC
+        """,
+        connection
+    )
+
+    connection.close()
+
+except Exception as error:
+
+    st.error(
+        f"Could not load database: {error}"
+    )
+
+    st.stop()
+
+
+# ---------------------------------------------------
+# Check Data
+# ---------------------------------------------------
+
+if data.empty:
+
+    st.warning(
+        "The database currently has no engagement records."
+    )
+
+    st.stop()
 
 
 # ---------------------------------------------------
@@ -69,7 +116,7 @@ missing_columns = [
 if missing_columns:
 
     st.error(
-        f"Missing columns in engagement.csv: {missing_columns}"
+        f"Missing database columns: {missing_columns}"
     )
 
     st.stop()
@@ -79,9 +126,13 @@ if missing_columns:
 # Calculate Statistics
 # ---------------------------------------------------
 
-average_engagement = data["engagement_score"].mean()
+average_engagement = (
+    data["engagement_score"].mean()
+)
 
-students_detected = data["student_id"].nunique()
+students_detected = (
+    data["student_id"].nunique()
+)
 
 low_engagement = data[
     data["engagement_score"] < 60

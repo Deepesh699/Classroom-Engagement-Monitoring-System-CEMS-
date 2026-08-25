@@ -1,43 +1,45 @@
-import csv
-import os
-DATA_FILE = os.path.join(
-    "data",
-    "engagement.csv"
+from database import (
+    get_all_records,
+    get_average_engagement,
+    get_low_engagement_count
 )
+
+
 def get_analytics():
-    if not os.path.exists(DATA_FILE):
-        return {
-            "average_engagement": 0,
-            "records": 0,
-            "low_engagement_records": 0
-        }
-    scores = []
-    with open(
-        DATA_FILE,
-        "r",
-        encoding="utf-8"
-    ) as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            scores.append(
-                int(row["engagement_score"])
-            )
-    if not scores:
-        average = 0
-    else:
-        average = sum(scores) / len(scores)
-    low_count = len([
-        score
-        for score in scores
-        if score < 60
-    ])
+
+    records = get_all_records()
+
     return {
-        "average_engagement": round(
-            average,
-            2
-        ),
-        "records": len(scores),
-        "low_engagement_records": low_count
+        "average_engagement":
+            get_average_engagement(),
+
+        "records":
+            len(records),
+
+        "low_engagement_records":
+            get_low_engagement_count(60)
     }
+
+
 if __name__ == "__main__":
-    print(get_analytics())
+
+    analytics = get_analytics()
+
+    print("CEMS Analytics")
+    print("-------------------------")
+
+    print(
+        "Average Engagement:",
+        analytics["average_engagement"],
+        "%"
+    )
+
+    print(
+        "Total Records:",
+        analytics["records"]
+    )
+
+    print(
+        "Low Engagement Records:",
+        analytics["low_engagement_records"]
+    )

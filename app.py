@@ -3,7 +3,7 @@ import os
 import time
 
 from tracking import StudentTracker
-from data_processing import save_engagement
+from database import save_engagement
 from alerts import check_alert
 from engagement_service import analyse_engagement
 
@@ -29,10 +29,7 @@ def main():
         return
 
 
-    # --------------------------------------------------
-    # YUNET FACE DETECTOR
-    # Same detector configuration used in tracking.py
-    # --------------------------------------------------
+
 
     detector = cv2.FaceDetectorYN.create(
         MODEL_PATH,
