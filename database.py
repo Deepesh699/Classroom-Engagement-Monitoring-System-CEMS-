@@ -440,6 +440,50 @@ def get_registered_student_for_track(session_id, track_id):
 
     return result[0]
 
+def save_live_tracking_result(
+    session_id,
+    track_id,
+    engagement_score,
+    status
+):
+    registered_student_id = get_registered_student_for_track(
+        session_id,
+        track_id
+    )
+
+    if registered_student_id is None:
+        return False
+
+    save_engagement(
+        student_id=track_id,
+        engagement_score=engagement_score,
+        status=status,
+        registered_student_id=registered_student_id,
+        session_id=session_id
+    )
+
+    return True
+def save_live_results(session_id, live_results):
+
+    saved_count = 0
+
+    for result in live_results:
+
+        track_id = result["track_id"]
+        score = result["score"]
+        status = result["status"]
+
+        saved = save_live_tracking_result(
+            session_id,
+            track_id,
+            score,
+            status
+        )
+
+        if saved:
+            saved_count += 1
+
+    return saved_count
 # -------------------------------------------------
 # ENGAGEMENT RECORDS
 # -------------------------------------------------
