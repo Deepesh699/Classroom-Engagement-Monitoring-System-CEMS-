@@ -5,3 +5,9 @@ timestamp,student_id,engagement_score,status
 2026-08-17T14:46:51,1,80,Engaged
 2026-08-17T14:46:51,2,50,Neutral
 2026-08-17T14:46:51,3,25,Disengaged
+2026-08-26T09:41:31,1,80,Engaged
+2026-08-26T09:41:31,2,50,Neutral
+2026-08-26T09:41:31,3,25,Disengaged
+2026-08-26T09:51:12,1,80,Engaged
+2026-08-26T09:51:12,2,50,Neutral
+2026-08-26T09:51:12,3,25,Disengaged
