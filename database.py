@@ -62,6 +62,19 @@ def initialise_database():
             FOREIGN KEY (classroom_id) REFERENCES classrooms(id)
         )
     """)
+     # Track-to-student assignments for classroom sessions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS track_assignments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id INTEGER NOT NULL,
+            track_id INTEGER NOT NULL,
+            registered_student_id INTEGER NOT NULL,
+            assigned_at TEXT NOT NULL,
+            UNIQUE(session_id, track_id),
+            FOREIGN KEY (session_id) REFERENCES sessions(id),
+            FOREIGN KEY (registered_student_id) REFERENCES students(id)
+        )
+    """)
 
     # Keep the existing engagement table
     cursor.execute("""
@@ -337,6 +350,95 @@ def get_sessions():
 
     return sessions
 
+# -------------------------------------------------
+# TRACK ASSIGNMENTS
+# -------------------------------------------------
+
+def assign_track_to_student(session_id, track_id, registered_student_id):
+    initialise_database()
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    try:
+        cursor.execute("""
+            INSERT INTO track_assignments (
+                session_id,
+                track_id,
+                registered_student_id,
+                assigned_at
+            )
+            VALUES (?, ?, ?, ?)
+        """, (
+            session_id,
+            track_id,
+            registered_student_id,
+            datetime.now().isoformat(timespec="seconds")
+        ))
+
+        connection.commit()
+
+        return True
+
+    except sqlite3.IntegrityError:
+        return False
+
+    finally:
+        connection.close()
+
+
+def get_track_assignments(session_id):
+    initialise_database()
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT
+            track_assignments.id,
+            track_assignments.track_id,
+            students.id,
+            students.student_number,
+            students.student_name,
+            track_assignments.assigned_at
+        FROM track_assignments
+        JOIN students
+            ON track_assignments.registered_student_id = students.id
+        WHERE track_assignments.session_id = ?
+        ORDER BY track_assignments.track_id ASC
+    """, (session_id,))
+
+    assignments = cursor.fetchall()
+
+    connection.close()
+
+    return assignments
+
+
+def get_registered_student_for_track(session_id, track_id):
+    initialise_database()
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT registered_student_id
+        FROM track_assignments
+        WHERE session_id = ?
+        AND track_id = ?
+    """, (
+        session_id,
+        track_id
+    ))
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    if result is None:
+        return None
+
+    return result[0]
 
 # -------------------------------------------------
 # ENGAGEMENT RECORDS
@@ -459,4 +561,4 @@ if __name__ == "__main__":
     print("- classrooms")
     print("- sessions")
     print("- engagement_records")
-    
+    print("- track_assignments")
