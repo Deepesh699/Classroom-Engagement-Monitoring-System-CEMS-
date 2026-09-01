@@ -8,6 +8,10 @@ from engagement_service import analyse_engagement
 MODEL_PATH = "face_detection_yunet_2023mar.onnx"
 
 
+# ============================================================
+# STUDENT TRACKER
+# ============================================================
+
 class StudentTracker:
 
     def __init__(self, max_distance=140, max_missing=45):
@@ -121,6 +125,8 @@ class StudentTracker:
             - old_centre[1]
         )
 
+        # Smooth movement so sudden changes
+        # do not completely change prediction.
         student["velocity"] = (
             student["velocity"][0]
             * 0.7
@@ -166,8 +172,8 @@ class StudentTracker:
             for face in faces
         ]
 
-        # Mark students as missing until
-        # they are matched in this frame.
+        # Every existing student is first
+        # considered missing for this frame.
         for student in self.students.values():
             student["missing"] += 1
 
@@ -184,9 +190,9 @@ class StudentTracker:
 
         candidates = []
 
-        # --------------------------------
-        # CREATE MATCHING CANDIDATES
-        # --------------------------------
+        # ====================================================
+        # CREATE STUDENT/FACE MATCHING CANDIDATES
+        # ====================================================
 
         for (
             student_id,
@@ -244,15 +250,15 @@ class StudentTracker:
                         )
                     )
 
-        # Best matches first.
+        # Best candidate first.
         candidates.sort(
             key=lambda item: item[0],
             reverse=True
         )
 
-        # --------------------------------
-        # MATCH FACES WITH STUDENTS
-        # --------------------------------
+        # ====================================================
+        # GREEDY ONE-TO-ONE MATCHING
+        # ====================================================
 
         for (
             score,
@@ -292,7 +298,8 @@ class StudentTracker:
                 faces[face_index]
             )
 
-        # Create IDs for new students.
+        # Faces that were not matched
+        # become new temporary students.
         for (
             face_index,
             face
@@ -323,7 +330,7 @@ class StudentTracker:
                 )
 
         results.sort(
-            key=lambda x: x["student_id"]
+            key=lambda item: item["student_id"]
         )
 
         return results
@@ -350,16 +357,15 @@ class StudentTracker:
             ]
 
 
+# ============================================================
+# FIND YUNET LANDMARK DETECTION FOR TRACKED FACE
+# ============================================================
+
 def find_best_detection(
     student_face,
     faces,
     detections
 ):
-
-    """
-    Connect a tracked student ID with
-    the closest current YuNet detection.
-    """
 
     sx, sy, sw, sh = student_face
 
@@ -405,11 +411,232 @@ def find_best_detection(
     return best_detection
 
 
+# ============================================================
+# CAMERA SOURCE SELECTION
+# ============================================================
+
+def select_camera_source():
+
+    print()
+    print("======================================")
+    print(" CEMS CAMERA SOURCE")
+    print("======================================")
+    print("1 - USB Camera")
+    print("2 - CCTV / IP Camera")
+    print("3 - Video File")
+    print("======================================")
+    print()
+
+    while True:
+
+        choice = input(
+            "Select source (1, 2 or 3): "
+        ).strip()
+
+        # ----------------------------------------------------
+        # USB CAMERA
+        # ----------------------------------------------------
+
+        if choice == "1":
+
+            print()
+            print("USB Camera selected.")
+
+            return {
+                "type": "usb",
+                "source": 0,
+                "name": "USB Camera",
+                "min_face_size": 45
+            }
+
+        # ----------------------------------------------------
+        # CCTV / IP CAMERA
+        # ----------------------------------------------------
+
+        elif choice == "2":
+
+            print()
+            print("CCTV / IP Camera selected.")
+            print()
+
+            print(
+                "Enter the RTSP stream address."
+            )
+
+            print(
+                "Example format:"
+            )
+
+            print(
+                "rtsp://username:password@192.168.1.100:554/stream"
+            )
+
+            print()
+            print(
+                "Do NOT save real CCTV passwords inside your Python code."
+            )
+            print()
+
+            rtsp_url = input(
+                "RTSP URL: "
+            ).strip()
+
+            rtsp_url = rtsp_url.strip(
+                "\"'"
+            )
+
+            if not rtsp_url:
+
+                print(
+                    "No RTSP URL entered."
+                )
+
+                continue
+
+            return {
+                "type": "cctv",
+                "source": rtsp_url,
+                "name": "CCTV / IP Camera",
+                "min_face_size": 30
+            }
+
+        # ----------------------------------------------------
+        # VIDEO FILE
+        # ----------------------------------------------------
+
+        elif choice == "3":
+
+            print()
+            print("Video File selected.")
+            print()
+
+            video_path = input(
+                "Enter video file path: "
+            ).strip()
+
+            video_path = video_path.strip(
+                "\"'"
+            )
+
+            if not os.path.exists(
+                video_path
+            ):
+
+                print()
+                print(
+                    "ERROR: Video file does not exist."
+                )
+                print()
+
+                continue
+
+            return {
+                "type": "video",
+                "source": video_path,
+                "name": "Video File",
+                "min_face_size": 30
+            }
+
+        else:
+
+            print()
+            print(
+                "Please enter 1, 2 or 3."
+            )
+            print()
+
+
+# ============================================================
+# OPEN CAMERA / VIDEO
+# ============================================================
+
+def open_video_source(source_info):
+
+    source = source_info[
+        "source"
+    ]
+
+    source_type = source_info[
+        "type"
+    ]
+
+    print()
+    print(
+        f"Opening {source_info['name']}..."
+    )
+
+    camera = cv2.VideoCapture(
+        source
+    )
+
+    if not camera.isOpened():
+
+        print()
+        print(
+            "ERROR: Could not open video source."
+        )
+
+        if source_type == "cctv":
+
+            print(
+                "Check the CCTV IP address, RTSP URL,"
+            )
+
+            print(
+                "username/password and network connection."
+            )
+
+        elif source_type == "usb":
+
+            print(
+                "Check that the USB camera is connected"
+            )
+
+            print(
+                "and not being used by another application."
+            )
+
+        elif source_type == "video":
+
+            print(
+                "Check the video file path and format."
+            )
+
+        return None
+
+    # USB webcam settings.
+    if source_type == "usb":
+
+        camera.set(
+            cv2.CAP_PROP_FRAME_WIDTH,
+            1280
+        )
+
+        camera.set(
+            cv2.CAP_PROP_FRAME_HEIGHT,
+            720
+        )
+
+    # Try to reduce delay on live streams.
+    if source_type == "cctv":
+
+        camera.set(
+            cv2.CAP_PROP_BUFFERSIZE,
+            1
+        )
+
+    return camera
+
+
+# ============================================================
+# MAIN CEMS PROGRAM
+# ============================================================
+
 def main():
 
-    # --------------------------------
+    # --------------------------------------------------------
     # CHECK YUNET MODEL
-    # --------------------------------
+    # --------------------------------------------------------
 
     if not os.path.exists(
         MODEL_PATH
@@ -419,97 +646,132 @@ def main():
             "ERROR: YuNet model not found:"
         )
 
-        print(MODEL_PATH)
+        print(
+            MODEL_PATH
+        )
 
         return
 
-    # --------------------------------
-    # CREATE YUNET FACE DETECTOR
-    # --------------------------------
+    # --------------------------------------------------------
+    # SELECT INPUT SOURCE
+    # --------------------------------------------------------
 
-    detector = cv2.FaceDetectorYN.create(
-        MODEL_PATH,
-        "",
-        (320, 320),
-        0.75,
-        0.3,
-        5000
+    source_info = (
+        select_camera_source()
     )
 
-    # --------------------------------
+    camera = open_video_source(
+        source_info
+    )
+
+    if camera is None:
+        return
+
+    # --------------------------------------------------------
+    # CREATE YUNET DETECTOR
+    # --------------------------------------------------------
+
+    detector = (
+        cv2.FaceDetectorYN.create(
+            MODEL_PATH,
+            "",
+            (320, 320),
+            0.75,
+            0.3,
+            5000
+        )
+    )
+
+    # --------------------------------------------------------
     # CREATE TRACKER
-    # --------------------------------
+    # --------------------------------------------------------
 
     tracker = StudentTracker(
         max_distance=140,
         max_missing=45
     )
 
-    # --------------------------------
-    # OPEN CAMERA
-    # --------------------------------
-
-    camera = cv2.VideoCapture(0)
-
-    if not camera.isOpened():
-
-        print(
-            "ERROR: Could not open camera."
-        )
-
-        return
-
-    camera.set(
-        cv2.CAP_PROP_FRAME_WIDTH,
-        1280
+    min_face_size = (
+        source_info[
+            "min_face_size"
+        ]
     )
 
-    camera.set(
-        cv2.CAP_PROP_FRAME_HEIGHT,
-        720
+    print()
+    print(
+        "CEMS Engagement Monitoring started."
     )
 
     print(
-        "CEMS Engagement Monitoring started."
+        f"Source: {source_info['name']}"
+    )
+
+    print(
+        f"Minimum face size: {min_face_size}px"
     )
 
     print(
         "Press Q to exit."
     )
 
-    # --------------------------------
-    # MAIN LOOP
-    # --------------------------------
+    print()
+
+    # ========================================================
+    # MAIN FRAME LOOP
+    # ========================================================
 
     while True:
 
         success, frame = camera.read()
 
+        # ----------------------------------------------------
+        # HANDLE VIDEO END / CAMERA ERROR
+        # ----------------------------------------------------
+
         if not success:
 
-            print(
-                "Could not read camera frame."
-            )
+            if (
+                source_info["type"]
+                == "video"
+            ):
+
+                print(
+                    "Video finished."
+                )
+
+            else:
+
+                print(
+                    "Could not read camera frame."
+                )
 
             break
 
-        height, width = frame.shape[:2]
-
-        detector.setInputSize(
-            (width, height)
+        height, width = (
+            frame.shape[:2]
         )
 
-        _, detections = detector.detect(
-            frame
+        # YuNet must know current frame size.
+        detector.setInputSize(
+            (
+                width,
+                height
+            )
+        )
+
+        _, detections = (
+            detector.detect(
+                frame
+            )
         )
 
         faces = []
 
         valid_detections = []
 
-        # --------------------------------
-        # PROCESS YUNET RESULTS
-        # --------------------------------
+        # ----------------------------------------------------
+        # PROCESS YUNET FACE DETECTIONS
+        # ----------------------------------------------------
 
         if detections is not None:
 
@@ -519,88 +781,115 @@ def main():
                     detection[:4]
                 )
 
-                confidence = (
+                confidence = float(
                     detection[14]
                 )
 
-                if confidence >= 0.75:
+                if confidence < 0.75:
+                    continue
 
-                    x = int(x)
-                    y = int(y)
-                    w = int(w)
-                    h = int(h)
+                x = int(x)
+                y = int(y)
+                w = int(w)
+                h = int(h)
 
-                    if (
-                        w >= 45
-                        and h >= 45
-                    ):
+                # Smaller minimum for CCTV/video because
+                # students may be farther from the camera.
+                if (
+                    w < min_face_size
+                    or h < min_face_size
+                ):
 
-                        faces.append(
-                            (
-                                x,
-                                y,
-                                w,
-                                h
-                            )
-                        )
+                    continue
 
-                        valid_detections.append(
-                            detection
-                        )
+                faces.append(
+                    (
+                        x,
+                        y,
+                        w,
+                        h
+                    )
+                )
 
-        # --------------------------------
-        # TRACK STUDENTS
-        # --------------------------------
+                valid_detections.append(
+                    detection
+                )
+
+        # ----------------------------------------------------
+        # TRACK ALL STUDENTS
+        # ----------------------------------------------------
 
         tracked_students = (
-            tracker.update(faces)
+            tracker.update(
+                faces
+            )
         )
 
         engaged_count = 0
         neutral_count = 0
         low_count = 0
 
-        # --------------------------------
-        # PROCESS EACH STUDENT
-        # --------------------------------
+        # This is the clean output that can later
+        # be connected to Deepesh's database code.
+        live_results = []
+
+        # ====================================================
+        # PROCESS EACH TRACKED STUDENT
+        # ====================================================
 
         for student in tracked_students:
 
             student_id = (
-                student["student_id"]
+                student[
+                    "student_id"
+                ]
             )
 
-            face = student["face"]
+            face = (
+                student[
+                    "face"
+                ]
+            )
 
             x, y, w, h = face
 
-            detection = find_best_detection(
-                face,
-                faces,
-                valid_detections
+            detection = (
+                find_best_detection(
+                    face,
+                    faces,
+                    valid_detections
+                )
             )
 
-            # --------------------------------
+            # ------------------------------------------------
             # ENGAGEMENT ANALYSIS
-            # --------------------------------
+            # ------------------------------------------------
 
             if detection is not None:
 
-                result = analyse_engagement(
-                    detection
+                result = (
+                    analyse_engagement(
+                        detection
+                    )
                 )
 
-                status = result[
-                    "status"
-                ]
+                status = (
+                    result[
+                        "status"
+                    ]
+                )
 
-                score = result[
-                    "score"
-                ]
+                score = (
+                    result[
+                        "score"
+                    ]
+                )
 
-                orientation = result[
-                    "orientation"
-                ]
+                orientation = (
+                    result[
+                        "orientation"
+                    ]
+                )
 
             else:
 
@@ -608,9 +897,24 @@ def main():
                 score = 0
                 orientation = "Unknown"
 
-            # --------------------------------
-            # CLASSROOM COUNTS
-            # --------------------------------
+            # ------------------------------------------------
+            # INTEGRATION OUTPUT
+            # ------------------------------------------------
+
+            student_result = {
+                "track_id": student_id,
+                "score": score,
+                "status": status,
+                "orientation": orientation
+            }
+
+            live_results.append(
+                student_result
+            )
+
+            # ------------------------------------------------
+            # CLASSROOM SUMMARY COUNTS
+            # ------------------------------------------------
 
             if status == "Engaged":
 
@@ -624,9 +928,9 @@ def main():
 
                 low_count += 1
 
-            # --------------------------------
-            # BOX COLOUR
-            # --------------------------------
+            # ------------------------------------------------
+            # COLOUR BASED ON ENGAGEMENT
+            # ------------------------------------------------
 
             if status == "Engaged":
 
@@ -652,13 +956,16 @@ def main():
                     255
                 )
 
-            # --------------------------------
-            # DRAW FACE BOX
-            # --------------------------------
+            # ------------------------------------------------
+            # DRAW STUDENT FACE BOX
+            # ------------------------------------------------
 
             cv2.rectangle(
                 frame,
-                (x, y),
+                (
+                    x,
+                    y
+                ),
                 (
                     x + w,
                     y + h
@@ -667,9 +974,9 @@ def main():
                 2
             )
 
-            # --------------------------------
+            # ------------------------------------------------
             # STUDENT LABEL
-            # --------------------------------
+            # ------------------------------------------------
 
             label = (
                 f"Student {student_id} | "
@@ -695,15 +1002,25 @@ def main():
                 cv2.LINE_AA
             )
 
-        # --------------------------------
-        # CLASSROOM SUMMARY BOX
-        # --------------------------------
+        # ====================================================
+        # CLASSROOM SUMMARY PANEL
+        # ====================================================
 
         cv2.rectangle(
             frame,
-            (10, 10),
-            (420, 90),
-            (0, 0, 0),
+            (
+                10,
+                10
+            ),
+            (
+                420,
+                90
+            ),
+            (
+                0,
+                0,
+                0
+            ),
             -1
         )
 
@@ -713,10 +1030,17 @@ def main():
                 "Students Detected: "
                 f"{len(tracked_students)}"
             ),
-            (20, 40),
+            (
+                20,
+                40
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.65,
-            (255, 255, 255),
+            (
+                255,
+                255,
+                255
+            ),
             2,
             cv2.LINE_AA
         )
@@ -727,10 +1051,17 @@ def main():
                 "Engaged: "
                 f"{engaged_count}"
             ),
-            (20, 70),
+            (
+                20,
+                70
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.60,
-            (0, 255, 0),
+            (
+                0,
+                255,
+                0
+            ),
             2,
             cv2.LINE_AA
         )
@@ -741,10 +1072,17 @@ def main():
                 "Neutral: "
                 f"{neutral_count}"
             ),
-            (150, 70),
+            (
+                150,
+                70
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.60,
-            (0, 255, 255),
+            (
+                0,
+                255,
+                255
+            ),
             2,
             cv2.LINE_AA
         )
@@ -755,17 +1093,24 @@ def main():
                 "Low: "
                 f"{low_count}"
             ),
-            (285, 70),
+            (
+                285,
+                70
+            ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.60,
-            (0, 0, 255),
+            (
+                0,
+                0,
+                255
+            ),
             2,
             cv2.LINE_AA
         )
 
-        # --------------------------------
-        # DISPLAY CAMERA
-        # --------------------------------
+        # ====================================================
+        # DISPLAY
+        # ====================================================
 
         cv2.imshow(
             "CEMS - Engagement Monitoring",
@@ -780,14 +1125,15 @@ def main():
         if key == ord("q"):
             break
 
-    # --------------------------------
+    # ========================================================
     # CLEANUP
-    # --------------------------------
+    # ========================================================
 
     camera.release()
 
     cv2.destroyAllWindows()
 
+    print()
     print(
         "CEMS session ended."
     )
