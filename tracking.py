@@ -11,17 +11,28 @@ MODEL_PATH = "face_detection_yunet_2023mar.onnx"
 
 
 # ============================================================
-# STUDENT TRACKER
+# MULTI-STUDENT TRACKER
 # ============================================================
 
 class StudentTracker:
+    """
+    Geometry-based multi-student tracker.
+
+    Matching uses:
+    - predicted movement
+    - normalized centre distance
+    - predicted bounding-box IoU
+    - face-size similarity
+    - movement-direction consistency
+
+    Track IDs are temporary session IDs.
+    This is not facial recognition.
+    """
 
     def __init__(self, max_distance=140, max_missing=45):
         self.students = {}
         self.max_distance = max_distance
         self.max_missing = max_missing
-
-        # IDs keep increasing instead of being recycled.
         self.next_student_id = 1
 
     def centre(self, box):
@@ -33,14 +44,12 @@ class StudentTracker:
         )
 
     def distance(self, p1, p2):
-        return math.sqrt(
-            (p1[0] - p2[0]) ** 2
-            +
-            (p1[1] - p2[1]) ** 2
+        return math.hypot(
+            p1[0] - p2[0],
+            p1[1] - p2[1]
         )
 
     def iou(self, box1, box2):
-
         x1, y1, w1, h1 = box1
         x2, y2, w2, h2 = box2
 
@@ -57,20 +66,30 @@ class StudentTracker:
             y2 + h2
         )
 
-        width = max(
+        intersection_w = max(
             0,
             right - left
         )
 
-        height = max(
+        intersection_h = max(
             0,
             bottom - top
         )
 
-        intersection = width * height
+        intersection = (
+            intersection_w
+            * intersection_h
+        )
 
-        area1 = w1 * h1
-        area2 = w2 * h2
+        area1 = (
+            max(0, w1)
+            * max(0, h1)
+        )
+
+        area2 = (
+            max(0, w2)
+            * max(0, h2)
+        )
 
         union = (
             area1
@@ -79,106 +98,427 @@ class StudentTracker:
         )
 
         if union <= 0:
-            return 0
-
-        return intersection / union
-
-    def predict(self, student):
-
-        cx, cy = student["centre"]
-        vx, vy = student["velocity"]
+            return 0.0
 
         return (
-            cx + vx,
-            cy + vy
+            intersection
+            / union
         )
 
-    def create_student(self, face):
-
-        student_id = self.next_student_id
-
-        self.next_student_id += 1
-
-        self.students[student_id] = {
-            "box": face,
-            "centre": self.centre(face),
-            "velocity": (0, 0),
-            "missing": 0
-        }
-
-        return student_id
-
-    def update_student(
+    def size_similarity(
         self,
-        student_id,
+        box1,
+        box2
+    ):
+        _, _, w1, h1 = box1
+        _, _, w2, h2 = box2
+
+        area1 = max(
+            1,
+            w1 * h1
+        )
+
+        area2 = max(
+            1,
+            w2 * h2
+        )
+
+        return (
+            min(area1, area2)
+            / max(area1, area2)
+        )
+
+    # ========================================================
+    # PREDICT WHERE A STUDENT SHOULD MOVE
+    # ========================================================
+
+    def predict_box(self, student):
+        x, y, w, h = student["box"]
+
+        vx, vy = student[
+            "velocity"
+        ]
+
+        # If a student disappears briefly,
+        # predict slightly farther forward.
+        steps = max(
+            1,
+            min(
+                student["missing"],
+                4
+            )
+        )
+
+        predicted_x = (
+            x + vx * steps
+        )
+
+        predicted_y = (
+            y + vy * steps
+        )
+
+        return (
+            predicted_x,
+            predicted_y,
+            w,
+            h
+        )
+
+    # ========================================================
+    # CHECK IF MOVEMENT DIRECTION MAKES SENSE
+    # ========================================================
+
+    def motion_consistency(
+        self,
+        student,
         face
     ):
+        vx, vy = student[
+            "velocity"
+        ]
 
-        student = self.students[
-            student_id
+        old_centre = student[
+            "centre"
         ]
 
         new_centre = self.centre(
             face
         )
 
-        old_centre = student[
-            "centre"
-        ]
-
-        velocity_x = (
+        dx = (
             new_centre[0]
             - old_centre[0]
         )
 
-        velocity_y = (
+        dy = (
             new_centre[1]
             - old_centre[1]
         )
 
-        # Smooth velocity.
-        student["velocity"] = (
-            student["velocity"][0]
-            * 0.7
-            + velocity_x
-            * 0.3,
-
-            student["velocity"][1]
-            * 0.7
-            + velocity_y
-            * 0.3
+        velocity_length = (
+            math.hypot(
+                vx,
+                vy
+            )
         )
 
-        student["centre"] = new_centre
+        movement_length = (
+            math.hypot(
+                dx,
+                dy
+            )
+        )
+
+        # If the student is barely moving,
+        # use a neutral motion score.
+        if (
+            velocity_length < 2
+            or movement_length < 2
+        ):
+            return 0.5
+
+        cosine = (
+            vx * dx
+            + vy * dy
+        ) / (
+            velocity_length
+            * movement_length
+        )
+
+        cosine = max(
+            -1.0,
+            min(
+                1.0,
+                cosine
+            )
+        )
+
+        # Convert -1..1 to 0..1.
+        return (
+            cosine + 1.0
+        ) / 2.0
+
+    # ========================================================
+    # CREATE NEW STUDENT
+    # ========================================================
+
+    def create_student(self, face):
+        student_id = (
+            self.next_student_id
+        )
+
+        self.next_student_id += 1
+
+        self.students[
+            student_id
+        ] = {
+            "box": face,
+            "centre": self.centre(
+                face
+            ),
+            "velocity": (
+                0.0,
+                0.0
+            ),
+            "missing": 0,
+            "hits": 1
+        }
+
+        return student_id
+
+    # ========================================================
+    # UPDATE EXISTING STUDENT
+    # ========================================================
+
+    def update_student(
+        self,
+        student_id,
+        face
+    ):
+        student = self.students[
+            student_id
+        ]
+
+        old_centre = student[
+            "centre"
+        ]
+
+        new_centre = self.centre(
+            face
+        )
+
+        # missing is incremented before matching,
+        # so this also gives us the frame gap.
+        frame_gap = max(
+            1,
+            student["missing"]
+        )
+
+        measured_vx = (
+            new_centre[0]
+            - old_centre[0]
+        ) / frame_gap
+
+        measured_vy = (
+            new_centre[1]
+            - old_centre[1]
+        ) / frame_gap
+
+        old_vx, old_vy = student[
+            "velocity"
+        ]
+
+        # Smooth velocity.
+        student["velocity"] = (
+            old_vx * 0.65
+            + measured_vx * 0.35,
+
+            old_vy * 0.65
+            + measured_vy * 0.35
+        )
+
         student["box"] = face
+
+        student["centre"] = (
+            new_centre
+        )
+
         student["missing"] = 0
 
-    def update(self, faces):
+        student["hits"] += 1
 
+    # ========================================================
+    # CALCULATE MATCH SCORE
+    # ========================================================
+
+    def build_match_score(
+        self,
+        student,
+        face
+    ):
+        predicted_box = (
+            self.predict_box(
+                student
+            )
+        )
+
+        predicted_centre = (
+            self.centre(
+                predicted_box
+            )
+        )
+
+        face_centre = self.centre(
+            face
+        )
+
+        centre_distance = (
+            self.distance(
+                predicted_centre,
+                face_centre
+            )
+        )
+
+        _, _, old_w, old_h = (
+            student["box"]
+        )
+
+        _, _, new_w, new_h = face
+
+        old_diagonal = (
+            math.hypot(
+                old_w,
+                old_h
+            )
+        )
+
+        new_diagonal = (
+            math.hypot(
+                new_w,
+                new_h
+            )
+        )
+
+        face_scale = max(
+            1.0,
+            (
+                old_diagonal
+                + new_diagonal
+            ) / 2.0
+        )
+
+        # Normalize movement relative
+        # to face size.
+        normalized_distance = (
+            centre_distance
+            / face_scale
+        )
+
+        # If a face was missing briefly,
+        # allow a slightly larger search area.
+        missing_bonus = (
+            min(
+                student["missing"],
+                10
+            )
+            * 0.12
+        )
+
+        max_normalized_distance = (
+            1.80
+            + missing_bonus
+        )
+
+        absolute_distance_limit = (
+            self.max_distance
+            +
+            min(
+                student["missing"],
+                10
+            )
+            * 12
+        )
+
+        predicted_overlap = (
+            self.iou(
+                predicted_box,
+                face
+            )
+        )
+
+        # Reject obviously impossible matches.
+        if (
+            normalized_distance
+            > max_normalized_distance
+            and centre_distance
+            > absolute_distance_limit
+            and predicted_overlap
+            <= 0.01
+        ):
+            return None
+
+        distance_score = max(
+            0.0,
+            1.0
+            - (
+                normalized_distance
+                / max_normalized_distance
+            )
+        )
+
+        size_score = (
+            self.size_similarity(
+                student["box"],
+                face
+            )
+        )
+
+        motion_score = (
+            self.motion_consistency(
+                student,
+                face
+            )
+        )
+
+        # ----------------------------------------
+        # TRACKING MATCH WEIGHTS
+        #
+        # 45% predicted distance
+        # 30% predicted IoU
+        # 15% face-size similarity
+        # 10% movement direction
+        # ----------------------------------------
+
+        match_score = (
+            distance_score
+            * 0.45
+            +
+            predicted_overlap
+            * 0.30
+            +
+            size_score
+            * 0.15
+            +
+            motion_score
+            * 0.10
+        )
+
+        # Prevent weak matches from stealing IDs.
+        if match_score < 0.20:
+            return None
+
+        return match_score
+
+    # ========================================================
+    # UPDATE TRACKER
+    # ========================================================
+
+    def update(self, faces):
         faces = [
-            tuple(map(int, face))
+            tuple(
+                map(
+                    int,
+                    face
+                )
+            )
             for face in faces
         ]
 
-        # First mark all existing students missing.
-        for student in self.students.values():
+        # Every track is considered missing
+        # until matched in this frame.
+        for student in (
+            self.students.values()
+        ):
             student["missing"] += 1
 
         if not faces:
-
             self.remove_missing()
-
             return []
-
-        matches = []
-
-        used_students = set()
-        used_faces = set()
 
         candidates = []
 
         # ====================================================
-        # CREATE MATCHING CANDIDATES
+        # BUILD ALL POSSIBLE MATCHES
         # ====================================================
 
         for (
@@ -186,51 +526,22 @@ class StudentTracker:
             student
         ) in self.students.items():
 
-            predicted = self.predict(
-                student
-            )
-
             for (
                 face_index,
                 face
             ) in enumerate(faces):
 
-                face_centre = self.centre(
-                    face
-                )
-
-                distance = self.distance(
-                    predicted,
-                    face_centre
-                )
-
-                overlap = self.iou(
-                    student["box"],
-                    face
+                match_score = (
+                    self.build_match_score(
+                        student,
+                        face
+                    )
                 )
 
                 if (
-                    distance <= self.max_distance
-                    or overlap > 0.05
+                    match_score
+                    is not None
                 ):
-
-                    distance_score = max(
-                        0,
-                        1
-                        - distance
-                        / self.max_distance
-                    )
-
-                    # 65% movement distance
-                    # 35% bounding-box overlap
-                    match_score = (
-                        distance_score
-                        * 0.65
-                        +
-                        overlap
-                        * 0.35
-                    )
-
                     candidates.append(
                         (
                             match_score,
@@ -239,10 +550,17 @@ class StudentTracker:
                         )
                     )
 
+        # Strongest matches first.
         candidates.sort(
-            key=lambda item: item[0],
+            key=lambda item:
+            item[0],
             reverse=True
         )
+
+        used_students = set()
+        used_faces = set()
+
+        visible_results = []
 
         # ====================================================
         # ONE-TO-ONE MATCHING
@@ -254,11 +572,24 @@ class StudentTracker:
             face_index
         ) in candidates:
 
-            if student_id in used_students:
+            if (
+                student_id
+                in used_students
+            ):
                 continue
 
-            if face_index in used_faces:
+            if (
+                face_index
+                in used_faces
+            ):
                 continue
+
+            self.update_student(
+                student_id,
+                faces[
+                    face_index
+                ]
+            )
 
             used_students.add(
                 student_id
@@ -268,80 +599,101 @@ class StudentTracker:
                 face_index
             )
 
-            matches.append(
-                (
-                    student_id,
-                    face_index
-                )
+            visible_results.append(
+                {
+                    "student_id":
+                        student_id,
+
+                    "face":
+                        faces[
+                            face_index
+                        ],
+
+                    "face_index":
+                        face_index,
+
+                    "match_score":
+                        round(
+                            match_score,
+                            3
+                        )
+                }
             )
 
-        # Update matched students.
-        for (
-            student_id,
-            face_index
-        ) in matches:
+        # ====================================================
+        # NEW FACES
+        # ====================================================
 
-            self.update_student(
-                student_id,
-                faces[face_index]
-            )
-
-        # New unmatched faces get new IDs.
         for (
             face_index,
             face
         ) in enumerate(faces):
 
-            if face_index not in used_faces:
+            if (
+                face_index
+                in used_faces
+            ):
+                continue
 
+            student_id = (
                 self.create_student(
                     face
                 )
+            )
+
+            visible_results.append(
+                {
+                    "student_id":
+                        student_id,
+
+                    "face":
+                        face,
+
+                    "face_index":
+                        face_index,
+
+                    "match_score":
+                        1.0
+                }
+            )
 
         self.remove_missing()
 
-        results = []
-
-        for (
-            student_id,
-            student
-        ) in self.students.items():
-
-            if student["missing"] == 0:
-
-                results.append(
-                    {
-                        "student_id": student_id,
-                        "face": student["box"]
-                    }
-                )
-
-        results.sort(
+        visible_results.sort(
             key=lambda item:
-            item["student_id"]
+            item[
+                "student_id"
+            ]
         )
 
-        return results
+        return visible_results
+
+    # ========================================================
+    # REMOVE OLD TRACKS
+    # ========================================================
 
     def remove_missing(self):
-
         remove_ids = [
             student_id
-            for student_id, student
-            in self.students.items()
-            if student["missing"]
-            > self.max_missing
+
+            for (
+                student_id,
+                student
+            ) in self.students.items()
+
+            if student[
+                "missing"
+            ] > self.max_missing
         ]
 
         for student_id in remove_ids:
-
             del self.students[
                 student_id
             ]
 
 
 # ============================================================
-# TEMPORAL ENGAGEMENT SMOOTHING
+# ENGAGEMENT SMOOTHING
 # ============================================================
 
 class EngagementSmoother:
@@ -352,20 +704,17 @@ class EngagementSmoother:
         orientation_window=7,
         low_duration=1.5
     ):
-
         self.states = {}
 
-        # Higher alpha = faster response.
-        # Lower alpha = smoother output.
         self.alpha = alpha
 
         self.orientation_window = (
             orientation_window
         )
 
-        # Student must remain below the low threshold
-        # for this many seconds before being labelled Low.
-        self.low_duration = low_duration
+        self.low_duration = (
+            low_duration
+        )
 
     def update(
         self,
@@ -373,22 +722,31 @@ class EngagementSmoother:
         raw_score,
         raw_orientation
     ):
-
         now = time.monotonic()
 
-        # ----------------------------------------------------
-        # FIRST OBSERVATION
-        # ----------------------------------------------------
+        if (
+            track_id
+            not in self.states
+        ):
+            self.states[
+                track_id
+            ] = {
+                "score":
+                    float(
+                        raw_score
+                    ),
 
-        if track_id not in self.states:
+                "orientations":
+                    deque(
+                        maxlen=
+                        self.orientation_window
+                    ),
 
-            self.states[track_id] = {
-                "score": float(raw_score),
-                "orientations": deque(
-                    maxlen=self.orientation_window
-                ),
-                "low_since": None,
-                "last_seen": now
+                "low_since":
+                    None,
+
+                "last_seen":
+                    now
             }
 
         state = self.states[
@@ -397,21 +755,26 @@ class EngagementSmoother:
 
         state["last_seen"] = now
 
-        # ----------------------------------------------------
-        # SCORE SMOOTHING
-        # ----------------------------------------------------
-
-        old_score = state["score"]
+        old_score = state[
+            "score"
+        ]
 
         smoothed_score = (
             self.alpha
-            * float(raw_score)
+            * float(
+                raw_score
+            )
             +
-            (1 - self.alpha)
+            (
+                1
+                - self.alpha
+            )
             * old_score
         )
 
-        state["score"] = smoothed_score
+        state["score"] = (
+            smoothed_score
+        )
 
         display_score = round(
             smoothed_score
@@ -434,91 +797,110 @@ class EngagementSmoother:
             and raw_orientation
             != "Unknown"
         ):
-
             state[
                 "orientations"
             ].append(
                 raw_orientation
             )
 
-        if state["orientations"]:
-
+        if state[
+            "orientations"
+        ]:
             stable_orientation = (
                 Counter(
                     state[
                         "orientations"
                     ]
                 )
-                .most_common(1)[0][0]
+                .most_common(
+                    1
+                )[0][0]
             )
 
         else:
-
             stable_orientation = (
                 "Unknown"
             )
 
         # ----------------------------------------------------
-        # STATUS FROM SMOOTHED SCORE
+        # ENGAGEMENT STATUS
         # ----------------------------------------------------
 
         if display_score >= 75:
 
             status = "Engaged"
 
-            state["low_since"] = None
+            state[
+                "low_since"
+            ] = None
 
         elif display_score >= 55:
 
             status = "Neutral"
 
-            state["low_since"] = None
+            state[
+                "low_since"
+            ] = None
 
         else:
 
-            # The score is low, but don't immediately
-            # label the student Low Engagement.
-            if state["low_since"] is None:
-
-                state["low_since"] = now
+            if (
+                state[
+                    "low_since"
+                ]
+                is None
+            ):
+                state[
+                    "low_since"
+                ] = now
 
             low_time = (
                 now
-                - state["low_since"]
+                - state[
+                    "low_since"
+                ]
             )
 
             if (
                 low_time
                 >= self.low_duration
             ):
-
                 status = (
                     "Low Engagement"
                 )
 
             else:
-
-                # Grace period for a short glance
-                # down or sideways.
-                status = "Neutral"
+                status = (
+                    "Neutral"
+                )
 
         return {
-            "score": display_score,
-            "status": status,
-            "orientation": stable_orientation
+            "score":
+                display_score,
+
+            "status":
+                status,
+
+            "orientation":
+                stable_orientation
         }
 
-    def cleanup(self, tracker_students):
-
+    def cleanup(
+        self,
+        tracker_students
+    ):
         existing_ids = set(
             tracker_students.keys()
         )
 
         remove_ids = [
             track_id
+
             for track_id
             in self.states
-            if track_id not in existing_ids
+
+            if track_id
+            not in existing_ids
         ]
 
         for track_id in remove_ids:
@@ -526,66 +908,6 @@ class EngagementSmoother:
             del self.states[
                 track_id
             ]
-
-
-# ============================================================
-# MATCH TRACKED FACE TO YUNET DETECTION
-# ============================================================
-
-def find_best_detection(
-    student_face,
-    faces,
-    detections
-):
-
-    sx, sy, sw, sh = student_face
-
-    student_centre = (
-        sx + sw / 2,
-        sy + sh / 2
-    )
-
-    best_detection = None
-    best_distance = float(
-        "inf"
-    )
-
-    for index, face in enumerate(
-        faces
-    ):
-
-        fx, fy, fw, fh = face
-
-        face_centre = (
-            fx + fw / 2,
-            fy + fh / 2
-        )
-
-        distance = math.sqrt(
-            (
-                student_centre[0]
-                - face_centre[0]
-            ) ** 2
-            +
-            (
-                student_centre[1]
-                - face_centre[1]
-            ) ** 2
-        )
-
-        if distance < best_distance:
-
-            best_distance = distance
-
-            if index < len(
-                detections
-            ):
-
-                best_detection = (
-                    detections[index]
-                )
-
-    return best_detection
 
 
 # ============================================================
@@ -625,16 +947,23 @@ def select_camera_source():
         ).strip()
 
         # ----------------------------------------------------
-        # USB
+        # USB CAMERA
         # ----------------------------------------------------
 
         if choice == "1":
 
             return {
-                "type": "usb",
-                "source": 0,
-                "name": "USB Camera",
-                "min_face_size": 45
+                "type":
+                    "usb",
+
+                "source":
+                    0,
+
+                "name":
+                    "USB Camera",
+
+                "min_face_size":
+                    45
             }
 
         # ----------------------------------------------------
@@ -644,14 +973,16 @@ def select_camera_source():
         elif choice == "2":
 
             print()
+
             print(
                 "Enter the CCTV/IP camera RTSP address."
             )
-            print()
+
             print(
-                "Do not save real CCTV passwords"
-                " inside your Python source code."
+                "Do not save real CCTV passwords "
+                "inside your Python source code."
             )
+
             print()
 
             rtsp_url = input(
@@ -674,10 +1005,17 @@ def select_camera_source():
                 continue
 
             return {
-                "type": "cctv",
-                "source": rtsp_url,
-                "name": "CCTV / IP Camera",
-                "min_face_size": 30
+                "type":
+                    "cctv",
+
+                "source":
+                    rtsp_url,
+
+                "name":
+                    "CCTV / IP Camera",
+
+                "min_face_size":
+                    30
             }
 
         # ----------------------------------------------------
@@ -703,31 +1041,42 @@ def select_camera_source():
             ):
 
                 print()
+
                 print(
                     "ERROR: Video file does not exist."
                 )
+
                 print()
 
                 continue
 
             return {
-                "type": "video",
-                "source": video_path,
-                "name": "Video File",
-                "min_face_size": 30
+                "type":
+                    "video",
+
+                "source":
+                    video_path,
+
+                "name":
+                    "Video File",
+
+                "min_face_size":
+                    30
             }
 
         else:
 
             print()
+
             print(
                 "Please enter 1, 2 or 3."
             )
+
             print()
 
 
 # ============================================================
-# OPEN VIDEO SOURCE
+# OPEN CAMERA / VIDEO SOURCE
 # ============================================================
 
 def open_video_source(
@@ -735,12 +1084,15 @@ def open_video_source(
 ):
 
     camera = cv2.VideoCapture(
-        source_info["source"]
+        source_info[
+            "source"
+        ]
     )
 
     if not camera.isOpened():
 
         print()
+
         print(
             "ERROR: Could not open video source."
         )
@@ -748,8 +1100,9 @@ def open_video_source(
         return None
 
     if (
-        source_info["type"]
-        == "usb"
+        source_info[
+            "type"
+        ] == "usb"
     ):
 
         camera.set(
@@ -763,12 +1116,11 @@ def open_video_source(
         )
 
     if (
-        source_info["type"]
-        == "cctv"
+        source_info[
+            "type"
+        ] == "cctv"
     ):
 
-        # Reduce latency when supported
-        # by the OpenCV backend.
         camera.set(
             cv2.CAP_PROP_BUFFERSIZE,
             1
@@ -778,13 +1130,13 @@ def open_video_source(
 
 
 # ============================================================
-# MAIN
+# MAIN PROGRAM
 # ============================================================
 
 def main():
 
     # --------------------------------------------------------
-    # MODEL CHECK
+    # CHECK YUNET MODEL
     # --------------------------------------------------------
 
     if not os.path.exists(
@@ -802,7 +1154,7 @@ def main():
         return
 
     # --------------------------------------------------------
-    # SOURCE
+    # SELECT CAMERA
     # --------------------------------------------------------
 
     source_info = (
@@ -819,7 +1171,7 @@ def main():
         return
 
     # --------------------------------------------------------
-    # YUNET
+    # YUNET DETECTOR
     # --------------------------------------------------------
 
     detector = (
@@ -834,7 +1186,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # TRACKER + SMOOTHER
+    # TRACKER
     # --------------------------------------------------------
 
     tracker = StudentTracker(
@@ -842,10 +1194,16 @@ def main():
         max_missing=45
     )
 
-    smoother = EngagementSmoother(
-        alpha=0.22,
-        orientation_window=7,
-        low_duration=1.5
+    # --------------------------------------------------------
+    # ENGAGEMENT SMOOTHER
+    # --------------------------------------------------------
+
+    smoother = (
+        EngagementSmoother(
+            alpha=0.22,
+            orientation_window=7,
+            low_duration=1.5
+        )
     )
 
     min_face_size = (
@@ -855,14 +1213,15 @@ def main():
     )
 
     # --------------------------------------------------------
-    # VIDEO PLAYBACK DELAY
+    # VIDEO PLAYBACK SPEED
     # --------------------------------------------------------
 
     video_delay = 1
 
     if (
-        source_info["type"]
-        == "video"
+        source_info[
+            "type"
+        ] == "video"
     ):
 
         fps = camera.get(
@@ -879,12 +1238,17 @@ def main():
             )
 
     print()
+
     print(
         "CEMS Engagement Monitoring started."
     )
 
     print(
         f"Source: {source_info['name']}"
+    )
+
+    print(
+        "Improved multi-student tracking enabled."
     )
 
     print(
@@ -898,7 +1262,7 @@ def main():
     print()
 
     # ========================================================
-    # FRAME LOOP
+    # MAIN FRAME LOOP
     # ========================================================
 
     while True:
@@ -910,8 +1274,9 @@ def main():
         if not success:
 
             if (
-                source_info["type"]
-                == "video"
+                source_info[
+                    "type"
+                ] == "video"
             ):
 
                 print(
@@ -948,22 +1313,32 @@ def main():
         valid_detections = []
 
         # ----------------------------------------------------
-        # YUNET DETECTIONS
+        # YUNET FACE DETECTION
         # ----------------------------------------------------
 
-        if detections is not None:
+        if (
+            detections
+            is not None
+        ):
 
             for detection in detections:
 
                 confidence = float(
-                    detection[14]
+                    detection[
+                        14
+                    ]
                 )
 
-                if confidence < 0.75:
+                if (
+                    confidence
+                    < 0.75
+                ):
                     continue
 
                 x, y, w, h = (
-                    detection[:4]
+                    detection[
+                        :4
+                    ]
                 )
 
                 x = int(x)
@@ -972,10 +1347,11 @@ def main():
                 h = int(h)
 
                 if (
-                    w < min_face_size
-                    or h < min_face_size
+                    w
+                    < min_face_size
+                    or h
+                    < min_face_size
                 ):
-
                     continue
 
                 faces.append(
@@ -992,7 +1368,7 @@ def main():
                 )
 
         # ----------------------------------------------------
-        # TRACKING
+        # MULTI-STUDENT TRACKING
         # ----------------------------------------------------
 
         tracked_students = (
@@ -1009,12 +1385,11 @@ def main():
         neutral_count = 0
         low_count = 0
 
-        # This structure remains compatible
-        # with Deepesh's integration.
+        # Keep this unchanged for Deepesh/database.
         live_results = []
 
         # ====================================================
-        # EACH STUDENT
+        # PROCESS EACH STUDENT
         # ====================================================
 
         for student in tracked_students:
@@ -1031,19 +1406,40 @@ def main():
                 ]
             )
 
-            detection = (
-                find_best_detection(
-                    student["face"],
-                    faces,
-                    valid_detections
-                )
+            # Because tracker now preserves the
+            # original face index, we do not need
+            # to guess which YuNet detection belongs
+            # to which student.
+            face_index = (
+                student[
+                    "face_index"
+                ]
             )
 
+            detection = None
+
+            if (
+                0
+                <= face_index
+                < len(
+                    valid_detections
+                )
+            ):
+
+                detection = (
+                    valid_detections[
+                        face_index
+                    ]
+                )
+
             # ------------------------------------------------
-            # RAW ENGAGEMENT
+            # ENGAGEMENT ANALYSIS
             # ------------------------------------------------
 
-            if detection is not None:
+            if (
+                detection
+                is not None
+            ):
 
                 raw_result = (
                     analyse_engagement(
@@ -1051,36 +1447,15 @@ def main():
                     )
                 )
 
-                raw_score = (
-                    raw_result[
-                        "score"
-                    ]
-                )
-
-                raw_orientation = (
-                    raw_result[
-                        "orientation"
-                    ]
-                )
-
-            else:
-
-                raw_score = 0
-                raw_orientation = (
-                    "Unknown"
-                )
-
-            # ------------------------------------------------
-            # TEMPORAL FILTER
-            # ------------------------------------------------
-
-            if detection is not None:
-
                 filtered = (
                     smoother.update(
                         student_id,
-                        raw_score,
-                        raw_orientation
+                        raw_result[
+                            "score"
+                        ],
+                        raw_result[
+                            "orientation"
+                        ]
                     )
                 )
 
@@ -1105,18 +1480,31 @@ def main():
             else:
 
                 score = 0
-                status = "Unknown"
-                orientation = "Unknown"
+
+                status = (
+                    "Unknown"
+                )
+
+                orientation = (
+                    "Unknown"
+                )
 
             # ------------------------------------------------
-            # DATABASE / INTEGRATION OUTPUT
+            # DATABASE / TEAM INTEGRATION OUTPUT
             # ------------------------------------------------
 
             student_result = {
-                "track_id": student_id,
-                "score": score,
-                "status": status,
-                "orientation": orientation
+                "track_id":
+                    student_id,
+
+                "score":
+                    score,
+
+                "status":
+                    status,
+
+                "orientation":
+                    orientation
             }
 
             live_results.append(
@@ -1124,14 +1512,20 @@ def main():
             )
 
             # ------------------------------------------------
-            # COUNTS
+            # SUMMARY COUNTS
             # ------------------------------------------------
 
-            if status == "Engaged":
+            if (
+                status
+                == "Engaged"
+            ):
 
                 engaged_count += 1
 
-            elif status == "Neutral":
+            elif (
+                status
+                == "Neutral"
+            ):
 
                 neutral_count += 1
 
@@ -1143,10 +1537,13 @@ def main():
                 low_count += 1
 
             # ------------------------------------------------
-            # COLOUR
+            # BOX COLOUR
             # ------------------------------------------------
 
-            if status == "Engaged":
+            if (
+                status
+                == "Engaged"
+            ):
 
                 box_colour = (
                     0,
@@ -1154,7 +1551,10 @@ def main():
                     0
                 )
 
-            elif status == "Neutral":
+            elif (
+                status
+                == "Neutral"
+            ):
 
                 box_colour = (
                     0,
@@ -1182,7 +1582,7 @@ def main():
                 )
 
             # ------------------------------------------------
-            # BOX
+            # FACE BOX
             # ------------------------------------------------
 
             cv2.rectangle(
@@ -1200,7 +1600,7 @@ def main():
             )
 
             # ------------------------------------------------
-            # LABEL
+            # STUDENT LABEL
             # ------------------------------------------------
 
             label = (
@@ -1361,6 +1761,7 @@ def main():
     cv2.destroyAllWindows()
 
     print()
+
     print(
         "CEMS session ended."
     )
