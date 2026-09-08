@@ -350,6 +350,28 @@ def get_sessions():
 
     return sessions
 
+def get_active_session_id():
+    initialise_database()
+
+    connection = get_connection()
+    cursor = connection.cursor()
+
+    cursor.execute("""
+        SELECT id
+        FROM sessions
+        WHERE end_time IS NULL
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+
+    result = cursor.fetchone()
+
+    connection.close()
+
+    if result is None:
+        return None
+
+    return result[0]
 # -------------------------------------------------
 # TRACK ASSIGNMENTS
 # -------------------------------------------------
