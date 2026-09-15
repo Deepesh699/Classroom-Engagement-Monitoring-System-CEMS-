@@ -1,43 +1,37 @@
-import csv
-import os
-DATA_FILE = os.path.join(
-    "data",
-    "engagement.csv"
-)
+from storage import get_all_records
+
+LOW_THRESHOLD = 60
+
+
+def calculate_average(records):
+    if not records:
+        return 0
+
+    scores = [
+        float(record["engagement_score"])
+        for record in records
+    ]
+
+    return round(sum(scores) / len(scores), 2)
+
+
+def get_low_engagement_count(records):
+    return sum(
+        1
+        for record in records
+        if float(record["engagement_score"]) < LOW_THRESHOLD
+    )
+
+
 def get_analytics():
-    if not os.path.exists(DATA_FILE):
-        return {
-            "average_engagement": 0,
-            "records": 0,
-            "low_engagement_records": 0
-        }
-    scores = []
-    with open(
-        DATA_FILE,
-        "r",
-        encoding="utf-8"
-    ) as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            scores.append(
-                int(row["engagement_score"])
-            )
-    if not scores:
-        average = 0
-    else:
-        average = sum(scores) / len(scores)
-    low_count = len([
-        score
-        for score in scores
-        if score < 60
-    ])
+    records = get_all_records()
+
     return {
-        "average_engagement": round(
-            average,
-            2
-        ),
-        "records": len(scores),
-        "low_engagement_records": low_count
+        "average_engagement": calculate_average(records),
+        "records": len(records),
+        "low_engagement_records": get_low_engagement_count(records)
     }
+
+
 if __name__ == "__main__":
     print(get_analytics())

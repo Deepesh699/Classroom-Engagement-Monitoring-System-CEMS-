@@ -1,58 +1,80 @@
-import csv
 import os
+import sqlite3
 from datetime import datetime
 
 DATA_FOLDER = "data"
-DATA_FILE = os.path.join(DATA_FOLDER, "engagement.csv")
+DATABASE_FILE = os.path.join(DATA_FOLDER, "cems.db")
 
 
-def initialise_storage():
+def get_connection():
     os.makedirs(DATA_FOLDER, exist_ok=True)
-    if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "w", newline="", encoding="utf-8") as file:
-            writer = csv.writer(file)
-            writer.writerow([
-                "timestamp",
-                "student_id",
-                "engagement_score",
-                "status"
-            ])
 
+    connection = sqlite3.connect(DATABASE_FILE)
+    connection.row_factory = sqlite3.Row
 
-def store_engagement(student_id, engagement_score, status):
-    initialise_storage()
-    with open(DATA_FILE, "a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            datetime.now().isoformat(timespec="seconds"),
-            student_id,
-            engagement_score,
-            status
-        ])
+    return connection
 
 
 def get_all_records():
-    initialise_storage()
-    records = []
-    with open(DATA_FILE, "r", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
-        for row in reader:
-            records.append(row)
-    return records
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            ORDER BY timestamp DESC
+        """)
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
+def store_engagement(
+    student_id,
+    engagement_score,
+    status,
+    registered_student_id=None,
+    session_id=None
+):
+    connection = get_connection()
+
+    try:
+        connection.execute("""
+            INSERT INTO engagement_records
+            (
+                timestamp,
+                student_id,
+                engagement_score,
+                status,
+                registered_student_id,
+                session_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.now().isoformat(timespec="seconds"),
+            student_id,
+            engagement_score,
+            status,
+            registered_student_id,
+            session_id
+        ))
+
+        connection.commit()
+
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":
-    print("Testing CEMS Data Storage")
-    store_engagement(
-        student_id=1,
-        engagement_score=82,
-        status="Engaged"
-    )
-    store_engagement(
-        student_id=2,
-        engagement_score=48,
-        status="Disengaged"
-    )
-    print("Records saved successfully.")
-    for record in get_all_records():
+    print("Testing SQLite engagement storage")
+
+    records = get_all_records()
+
+    print(f"Records found: {len(records)}")
+
+    for record in records[:10]:
         print(record)
