@@ -331,10 +331,167 @@ if page == "Overview":
 elif page == "Live Classroom":
 
     st.title("🎥 Live Classroom")
-    st.info(
-        "Live Classroom will be implemented next."
+
+    st.caption(
+        "Latest available engagement activity for tracked students"
     )
 
+    if data.empty:
+
+        st.warning(
+            "No engagement records are currently available."
+        )
+
+        st.info(
+            "Student tracking data will appear here "
+            "when engagement records are received."
+        )
+
+    else:
+
+        # Get the latest record for each student
+        live_data = data.copy()
+
+        live_data["timestamp"] = pd.to_datetime(
+            live_data["timestamp"],
+            errors="coerce"
+        )
+
+        live_data = live_data.dropna(
+            subset=["timestamp"]
+        )
+
+        live_data = live_data.sort_values(
+            "timestamp"
+        )
+
+        latest_students = (
+            live_data
+            .groupby("student_id")
+            .tail(1)
+            .reset_index(drop=True)
+        )
+
+        # ---------------------------------------------
+        # LIVE METRICS
+        # ---------------------------------------------
+
+        total_students = latest_students[
+            "student_id"
+        ].nunique()
+
+        average_engagement = latest_students[
+            "engagement_score"
+        ].mean()
+
+        low_students = latest_students[
+            latest_students["engagement_score"] < 60
+        ]
+
+        low_count = low_students[
+            "student_id"
+        ].nunique()
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.metric(
+                "Students Currently Tracked",
+                total_students
+            )
+
+        with col2:
+            st.metric(
+                "Current Average Engagement",
+                f"{average_engagement:.0f}%"
+            )
+
+        with col3:
+            st.metric(
+                "Low Engagement Students",
+                low_count
+            )
+
+        st.divider()
+
+        # ---------------------------------------------
+        # CURRENT STUDENT ACTIVITY
+        # ---------------------------------------------
+
+        st.subheader("👨‍🎓 Current Student Activity")
+
+        display_data = latest_students[
+            [
+                "student_id",
+                "engagement_score",
+                "status",
+                "timestamp"
+            ]
+        ].copy()
+
+        display_data = display_data.rename(
+            columns={
+                "student_id": "Student",
+                "engagement_score": "Engagement",
+                "status": "Status",
+                "timestamp": "Last Update"
+            }
+        )
+
+        display_data["Engagement"] = (
+            display_data["Engagement"]
+            .round(0)
+            .astype(int)
+            .astype(str)
+            + "%"
+        )
+
+        display_data["Last Update"] = (
+            display_data["Last Update"]
+            .dt.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        st.dataframe(
+            display_data,
+            width="stretch",
+            hide_index=True
+        )
+
+        # ---------------------------------------------
+        # LOW ENGAGEMENT ALERTS
+        # ---------------------------------------------
+
+        st.subheader("🚨 Low Engagement Alerts")
+
+        if low_students.empty:
+
+            st.success(
+                "No students are currently below "
+                "the 60% engagement threshold."
+            )
+
+        else:
+
+            for _, row in low_students.iterrows():
+
+                st.warning(
+                    f"Student {row['student_id']} — "
+                    f"{row['engagement_score']:.0f}% engagement "
+                    f"({row['status']})"
+                )
+
+        # ---------------------------------------------
+        # LAST UPDATE
+        # ---------------------------------------------
+
+        latest_timestamp = live_data[
+            "timestamp"
+        ].max()
+
+        st.caption(
+            f"Latest data received: "
+            f"{latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
 
 elif page == "Student History":
 
