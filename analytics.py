@@ -1,4 +1,9 @@
-from storage import get_all_records
+from storage import (
+    get_all_records,
+    get_student_records,
+    get_session_records,
+    get_student_session_records
+)
 
 LOW_THRESHOLD = 60
 
@@ -21,6 +26,27 @@ def get_low_engagement_count(records):
         for record in records
         if float(record["engagement_score"]) < LOW_THRESHOLD
     )
+
+
+def get_student_average(registered_student_id):
+    records = get_student_records(registered_student_id)
+
+    return calculate_average(records)
+
+
+def get_session_average(session_id):
+    records = get_session_records(session_id)
+
+    return calculate_average(records)
+
+
+def get_student_session_average(registered_student_id, session_id):
+    records = get_student_session_records(
+        registered_student_id,
+        session_id
+    )
+
+    return calculate_average(records)
 
 
 def get_analytics():

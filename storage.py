@@ -33,6 +33,64 @@ def get_all_records():
         connection.close()
 
 
+def get_student_records(registered_student_id):
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            WHERE registered_student_id = ?
+            ORDER BY timestamp DESC
+        """, (registered_student_id,))
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
+def get_session_records(session_id):
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            WHERE session_id = ?
+            ORDER BY timestamp DESC
+        """, (session_id,))
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
+def get_student_session_records(registered_student_id, session_id):
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            WHERE registered_student_id = ?
+              AND session_id = ?
+            ORDER BY timestamp DESC
+        """, (registered_student_id, session_id))
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
 def store_engagement(
     student_id,
     engagement_score,
