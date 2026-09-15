@@ -166,6 +166,25 @@ def get_students():
 
     return students
 
+def get_student_by_id(student_id):
+    initialise_database()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT id, student_number, student_name, created_at
+        FROM students
+        WHERE id = ?
+        """,
+        (student_id,)
+    )
+
+    student = cursor.fetchone()
+    conn.close()
+
+    return student
 
 # -------------------------------------------------
 # UNITS

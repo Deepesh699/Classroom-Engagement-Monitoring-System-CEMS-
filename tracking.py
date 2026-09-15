@@ -11,7 +11,7 @@ MODEL_PATH = "face_detection_yunet_2023mar.onnx"
 class StudentTracker:
 
     def __init__(self, max_distance=140, max_missing=45):
-        self.students = {}
+        self.tracks = {}
         self.max_distance = max_distance
         self.max_missing = max_missing
 
@@ -26,8 +26,7 @@ class StudentTracker:
     def distance(self, p1, p2):
         return math.sqrt(
             (p1[0] - p2[0]) ** 2
-            +
-            (p1[1] - p2[1]) ** 2
+            + (p1[1] - p2[1]) ** 2
         )
 
     def iou(self, box1, box2):
@@ -76,38 +75,38 @@ class StudentTracker:
 
     def next_id(self):
 
-        student_id = 1
+        track_id = 1
 
-        while student_id in self.students:
-            student_id += 1
+        while track_id in self.tracks:
+            track_id += 1
 
-        return student_id
+        return track_id
 
-    def predict(self, student):
+    def predict(self, track):
 
-        cx, cy = student["centre"]
-        vx, vy = student["velocity"]
+        cx, cy = track["centre"]
+        vx, vy = track["velocity"]
 
         return (
             cx + vx,
             cy + vy
         )
 
-    def update_student(
+    def update_track(
         self,
-        student_id,
+        track_id,
         face
     ):
 
-        student = self.students[
-            student_id
+        track = self.tracks[
+            track_id
         ]
 
         new_centre = self.centre(
             face
         )
 
-        old_centre = student[
+        old_centre = track[
             "centre"
         ]
 
@@ -121,35 +120,35 @@ class StudentTracker:
             - old_centre[1]
         )
 
-        student["velocity"] = (
-            student["velocity"][0]
+        track["velocity"] = (
+            track["velocity"][0]
             * 0.7
             + velocity_x
             * 0.3,
 
-            student["velocity"][1]
+            track["velocity"][1]
             * 0.7
             + velocity_y
             * 0.3
         )
 
-        student["centre"] = new_centre
-        student["box"] = face
-        student["missing"] = 0
+        track["centre"] = new_centre
+        track["box"] = face
+        track["missing"] = 0
 
-    def create_student(
+    def create_track(
         self,
         face
     ):
 
-        student_id = self.next_id()
+        track_id = self.next_id()
 
         centre = self.centre(
             face
         )
 
-        self.students[
-            student_id
+        self.tracks[
+            track_id
         ] = {
             "box": face,
             "centre": centre,
@@ -157,7 +156,7 @@ class StudentTracker:
             "missing": 0
         }
 
-        return student_id
+        return track_id
 
     def update(self, faces):
 
@@ -166,10 +165,10 @@ class StudentTracker:
             for face in faces
         ]
 
-        # Mark students as missing until
-        # they are matched in this frame.
-        for student in self.students.values():
-            student["missing"] += 1
+        # Mark all tracks as missing until
+        # matched in the current frame.
+        for track in self.tracks.values():
+            track["missing"] += 1
 
         if not faces:
 
@@ -179,7 +178,7 @@ class StudentTracker:
 
         matches = []
 
-        used_students = set()
+        used_tracks = set()
         used_faces = set()
 
         candidates = []
@@ -189,12 +188,12 @@ class StudentTracker:
         # --------------------------------
 
         for (
-            student_id,
-            student
-        ) in self.students.items():
+            track_id,
+            track
+        ) in self.tracks.items():
 
             predicted = self.predict(
-                student
+                track
             )
 
             for (
@@ -212,7 +211,7 @@ class StudentTracker:
                 )
 
                 overlap = self.iou(
-                    student["box"],
+                    track["box"],
                     face
                 )
 
@@ -231,15 +230,14 @@ class StudentTracker:
                     score = (
                         distance_score
                         * 0.65
-                        +
-                        overlap
+                        + overlap
                         * 0.35
                     )
 
                     candidates.append(
                         (
                             score,
-                            student_id,
+                            track_id,
                             face_index
                         )
                     )
@@ -251,23 +249,23 @@ class StudentTracker:
         )
 
         # --------------------------------
-        # MATCH FACES WITH STUDENTS
+        # MATCH FACES WITH TRACKS
         # --------------------------------
 
         for (
             score,
-            student_id,
+            track_id,
             face_index
         ) in candidates:
 
-            if student_id in used_students:
+            if track_id in used_tracks:
                 continue
 
             if face_index in used_faces:
                 continue
 
-            used_students.add(
-                student_id
+            used_tracks.add(
+                track_id
             )
 
             used_faces.add(
@@ -276,23 +274,29 @@ class StudentTracker:
 
             matches.append(
                 (
-                    student_id,
+                    track_id,
                     face_index
                 )
             )
 
-        # Update matched students.
+        # --------------------------------
+        # UPDATE MATCHED TRACKS
+        # --------------------------------
+
         for (
-            student_id,
+            track_id,
             face_index
         ) in matches:
 
-            self.update_student(
-                student_id,
+            self.update_track(
+                track_id,
                 faces[face_index]
             )
 
-        # Create IDs for new students.
+        # --------------------------------
+        # CREATE NEW TRACKS
+        # --------------------------------
+
         for (
             face_index,
             face
@@ -300,7 +304,7 @@ class StudentTracker:
 
             if face_index not in used_faces:
 
-                self.create_student(
+                self.create_track(
                     face
                 )
 
@@ -309,21 +313,21 @@ class StudentTracker:
         results = []
 
         for (
-            student_id,
-            student
-        ) in self.students.items():
+            track_id,
+            track
+        ) in self.tracks.items():
 
-            if student["missing"] == 0:
+            if track["missing"] == 0:
 
                 results.append(
                     {
-                        "student_id": student_id,
-                        "face": student["box"]
+                        "track_id": track_id,
+                        "face": track["box"]
                     }
                 )
 
         results.sort(
-            key=lambda x: x["student_id"]
+            key=lambda item: item["track_id"]
         )
 
         return results
@@ -332,38 +336,38 @@ class StudentTracker:
 
         remove_ids = [
 
-            student_id
+            track_id
 
             for (
-                student_id,
-                student
-            ) in self.students.items()
+                track_id,
+                track
+            ) in self.tracks.items()
 
-            if student["missing"]
+            if track["missing"]
             > self.max_missing
         ]
 
-        for student_id in remove_ids:
+        for track_id in remove_ids:
 
-            del self.students[
-                student_id
+            del self.tracks[
+                track_id
             ]
 
 
 def find_best_detection(
-    student_face,
+    tracked_face,
     faces,
     detections
 ):
 
     """
-    Connect a tracked student ID with
-    the closest current YuNet detection.
+    Connect a tracked face with the closest
+    current YuNet detection.
     """
 
-    sx, sy, sw, sh = student_face
+    sx, sy, sw, sh = tracked_face
 
-    student_centre = (
+    tracked_centre = (
         sx + sw / 2,
         sy + sh / 2
     )
@@ -382,12 +386,12 @@ def find_best_detection(
 
         distance = math.sqrt(
             (
-                student_centre[0]
+                tracked_centre[0]
                 - face_centre[0]
             ) ** 2
             +
             (
-                student_centre[1]
+                tracked_centre[1]
                 - face_centre[1]
             ) ** 2
         )
@@ -519,7 +523,7 @@ def main():
                     detection[:4]
                 )
 
-                confidence = (
+                confidence = float(
                     detection[14]
                 )
 
@@ -549,29 +553,34 @@ def main():
                         )
 
         # --------------------------------
-        # TRACK STUDENTS
+        # TRACK FACES
         # --------------------------------
 
         tracked_students = (
-            tracker.update(faces)
+            tracker.update(
+                faces
+            )
         )
 
         engaged_count = 0
         neutral_count = 0
         low_count = 0
+
         live_results = []
 
         # --------------------------------
-        # PROCESS EACH STUDENT
+        # PROCESS EACH TRACK
         # --------------------------------
 
-        for student in tracked_students:
+        for tracked_student in tracked_students:
 
-            student_id = (
-                student["student_id"]
+            track_id = (
+                tracked_student["track_id"]
             )
 
-            face = student["face"]
+            face = (
+                tracked_student["face"]
+            )
 
             x, y, w, h = face
 
@@ -608,12 +617,19 @@ def main():
                 status = "Unknown"
                 score = 0
                 orientation = "Unknown"
-                live_results.append({
-    "track_id": student_id,
-    "score": score,
-    "status": status,
-    "orientation": orientation
-})
+
+            # --------------------------------
+            # LIVE RESULTS OUTPUT
+            # --------------------------------
+
+            live_results.append(
+                {
+                    "track_id": track_id,
+                    "score": score,
+                    "status": status,
+                    "orientation": orientation
+                }
+            )
 
             # --------------------------------
             # CLASSROOM COUNTS
@@ -675,11 +691,11 @@ def main():
             )
 
             # --------------------------------
-            # STUDENT LABEL
+            # TRACK LABEL
             # --------------------------------
 
             label = (
-                f"Student {student_id} | "
+                f"Track {track_id} | "
                 f"{orientation} | "
                 f"{status} | "
                 f"{score}%"

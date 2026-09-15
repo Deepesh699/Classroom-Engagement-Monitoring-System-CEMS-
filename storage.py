@@ -40,19 +40,3 @@ def get_all_records():
             records.append(row)
     return records
 
-
-if __name__ == "__main__":
-    print("Testing CEMS Data Storage")
-    store_engagement(
-        student_id=1,
-        engagement_score=82,
-        status="Engaged"
-    )
-    store_engagement(
-        student_id=2,
-        engagement_score=48,
-        status="Disengaged"
-    )
-    print("Records saved successfully.")
-    for record in get_all_records():
-        print(record)

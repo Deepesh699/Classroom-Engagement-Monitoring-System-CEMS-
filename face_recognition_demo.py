@@ -1,6 +1,7 @@
 import cv2
 
 from face_recognition_service import FaceRecognitionService
+from face_student_integration import verify_recognised_student
 
 
 YUNET_MODEL_PATH = "face_detection_yunet_2023mar.onnx"
@@ -87,37 +88,49 @@ def main():
 
                 try:
 
-                    feature = (
-                        recognition_service.extract_feature(
-                            frame,
-                            detection
-                        )
+                    feature = recognition_service.extract_feature(
+                        frame,
+                        detection
                     )
 
-                    result = (
-                        recognition_service.recognise(
-                            feature
-                        )
+                    result = recognition_service.recognise(
+                        feature
                     )
 
-                    similarity = result[
-                        "similarity"
-                    ]
+                    verified = verify_recognised_student(
+                        result
+                    )
 
-                    if result["recognised"]:
+                    similarity = result["similarity"]
 
-                        student_name = result[
+                    if (
+                        result["recognised"]
+                        and verified["valid"]
+                    ):
+
+                        student = verified["student"]
+                        session_id = verified["session_id"]
+
+                        student_name = student[
                             "student_name"
                         ]
 
-                        student_number = result[
+                        student_number = student[
                             "student_number"
                         ]
+
+                        if session_id is None:
+                            session_text = "No active session"
+                        else:
+                            session_text = (
+                                f"Session {session_id}"
+                            )
 
                         label = (
                             f"{student_name} | "
                             f"{student_number} | "
-                            f"{similarity:.2f}"
+                            f"{similarity:.2f} | "
+                            f"{session_text}"
                         )
 
                         box_color = (
@@ -139,11 +152,14 @@ def main():
                             255
                         )
 
-                except cv2.error:
+                except cv2.error as error:
 
-                    label = (
-                        "Recognition error"
+                    print(
+                        "Recognition error:",
+                        error
                     )
+
+                    label = "Recognition error"
 
                     box_color = (
                         0,
