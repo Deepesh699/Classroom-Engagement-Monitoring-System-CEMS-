@@ -2,7 +2,9 @@ from storage import (
     get_all_records,
     get_student_records,
     get_session_records,
-    get_student_session_records
+    get_student_session_records,
+    get_daily_records,
+    get_weekly_records
 )
 
 LOW_THRESHOLD = 60
@@ -45,6 +47,18 @@ def get_student_session_average(registered_student_id, session_id):
         registered_student_id,
         session_id
     )
+
+    return calculate_average(records)
+
+
+def get_daily_average(date):
+    records = get_daily_records(date)
+
+    return calculate_average(records)
+
+
+def get_weekly_average(start_date):
+    records = get_weekly_records(start_date)
 
     return calculate_average(records)
 

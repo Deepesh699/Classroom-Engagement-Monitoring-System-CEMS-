@@ -91,6 +91,45 @@ def get_student_session_records(registered_student_id, session_id):
         connection.close()
 
 
+def get_daily_records(date):
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            WHERE DATE(timestamp) = ?
+            ORDER BY timestamp DESC
+        """, (date,))
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
+def get_weekly_records(start_date):
+    connection = get_connection()
+
+    try:
+        cursor = connection.execute("""
+            SELECT *
+            FROM engagement_records
+            WHERE DATE(timestamp) >= DATE(?)
+              AND DATE(timestamp) < DATE(?, '+7 days')
+            ORDER BY timestamp DESC
+        """, (start_date, start_date))
+
+        rows = cursor.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        connection.close()
+
+
 def store_engagement(
     student_id,
     engagement_score,
