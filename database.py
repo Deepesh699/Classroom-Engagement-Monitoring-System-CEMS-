@@ -90,6 +90,7 @@ def initialise_database():
     connection.commit()
 
     # Add new Iteration 2 columns to the existing table
+        # Add new Iteration 2 columns to the existing table
     cursor.execute("PRAGMA table_info(engagement_records)")
     columns = [column[1] for column in cursor.fetchall()]
 
@@ -105,9 +106,14 @@ def initialise_database():
             ADD COLUMN session_id INTEGER
         """)
 
+    if "orientation" not in columns:
+        cursor.execute("""
+            ALTER TABLE engagement_records
+            ADD COLUMN orientation TEXT
+        """)
+
     connection.commit()
     connection.close()
-
 
 # -------------------------------------------------
 # STUDENTS
@@ -485,12 +491,24 @@ def save_live_tracking_result(
     session_id,
     track_id,
     engagement_score,
-    status
+    status,
+    orientation="Unknown",
+    registered_student_id=None
 ):
-    registered_student_id = get_registered_student_for_track(
-        session_id,
-        track_id
-    )
+    """
+    Save one live tracking result.
+
+    If registered_student_id is provided by face recognition,
+    use it directly.
+
+    Otherwise fall back to the existing track_assignments table.
+    """
+
+    if registered_student_id is None:
+        registered_student_id = get_registered_student_for_track(
+            session_id,
+            track_id
+        )
 
     if registered_student_id is None:
         return False
@@ -500,11 +518,30 @@ def save_live_tracking_result(
         engagement_score=engagement_score,
         status=status,
         registered_student_id=registered_student_id,
-        session_id=session_id
+        session_id=session_id,
+        orientation=orientation
     )
 
     return True
-def save_live_results(session_id, live_results):
+
+
+def save_live_results(
+    session_id,
+    live_results
+):
+    """
+    Save multiple live tracking results.
+
+    Expected result example:
+
+    {
+        "track_id": 1,
+        "score": 78,
+        "status": "Engaged",
+        "orientation": "Forward",
+        "registered_student_id": 2
+    }
+    """
 
     saved_count = 0
 
@@ -514,17 +551,30 @@ def save_live_results(session_id, live_results):
         score = result["score"]
         status = result["status"]
 
+        orientation = result.get(
+            "orientation",
+            "Unknown"
+        )
+
+        registered_student_id = result.get(
+            "registered_student_id"
+        )
+
         saved = save_live_tracking_result(
-            session_id,
-            track_id,
-            score,
-            status
+            session_id=session_id,
+            track_id=track_id,
+            engagement_score=score,
+            status=status,
+            orientation=orientation,
+            registered_student_id=registered_student_id
         )
 
         if saved:
             saved_count += 1
 
     return saved_count
+
+
 # -------------------------------------------------
 # ENGAGEMENT RECORDS
 # -------------------------------------------------
@@ -534,7 +584,8 @@ def save_engagement(
     engagement_score,
     status,
     registered_student_id=None,
-    session_id=None
+    session_id=None,
+    orientation=None
 ):
     initialise_database()
 
@@ -548,16 +599,20 @@ def save_engagement(
             engagement_score,
             status,
             registered_student_id,
-            session_id
+            session_id,
+            orientation
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     """, (
-        datetime.now().isoformat(timespec="seconds"),
+        datetime.now().isoformat(
+            timespec="seconds"
+        ),
         student_id,
         engagement_score,
         status,
         registered_student_id,
-        session_id
+        session_id,
+        orientation
     ))
 
     connection.commit()
@@ -578,7 +633,8 @@ def get_all_records():
             engagement_score,
             status,
             registered_student_id,
-            session_id
+            session_id,
+            orientation
         FROM engagement_records
         ORDER BY id DESC
     """)
@@ -588,7 +644,6 @@ def get_all_records():
     connection.close()
 
     return records
-
 
 def get_average_engagement():
     initialise_database()
