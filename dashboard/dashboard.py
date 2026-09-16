@@ -496,10 +496,187 @@ elif page == "Live Classroom":
 elif page == "Student History":
 
     st.title("👨‍🎓 Student History")
-    st.info(
-        "Student History will be implemented next."
+
+    st.caption(
+        "Individual student engagement history and session activity"
     )
 
+    # -----------------------------------------------------
+    # CHECK DATA
+    # -----------------------------------------------------
+
+    if data.empty:
+
+        st.warning(
+            "No student engagement data is currently available."
+        )
+
+    else:
+
+        # -------------------------------------------------
+        # STUDENT SELECTION
+        # -------------------------------------------------
+
+        student_ids = sorted(
+            data["student_id"]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+        selected_student = st.selectbox(
+            "Select Student",
+            student_ids
+        )
+
+        # -------------------------------------------------
+        # FILTER SELECTED STUDENT
+        # -------------------------------------------------
+
+        student_data = data[
+            data["student_id"] == selected_student
+        ].copy()
+
+        student_data["timestamp"] = pd.to_datetime(
+            student_data["timestamp"],
+            errors="coerce"
+        )
+
+        student_data = student_data.dropna(
+            subset=["timestamp"]
+        )
+
+        student_data = student_data.sort_values(
+            "timestamp"
+        )
+
+        # -------------------------------------------------
+        # STUDENT METRICS
+        # -------------------------------------------------
+
+        average_engagement = student_data[
+            "engagement_score"
+        ].mean()
+
+        total_records = len(student_data)
+
+        low_records = student_data[
+            student_data["engagement_score"] < 60
+        ]
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Student",
+                str(selected_student)
+            )
+
+        with col2:
+
+            st.metric(
+                "Average Engagement",
+                f"{average_engagement:.0f}%"
+            )
+
+        with col3:
+
+            st.metric(
+                "Low Engagement Periods",
+                len(low_records)
+            )
+
+        st.divider()
+
+        # -------------------------------------------------
+        # ENGAGEMENT HISTORY CHART
+        # -------------------------------------------------
+
+        st.subheader("📈 Engagement Over Time")
+
+        chart_data = student_data[
+            [
+                "timestamp",
+                "engagement_score"
+            ]
+        ].copy()
+
+        chart_data = chart_data.set_index(
+            "timestamp"
+        )
+
+        st.line_chart(
+            chart_data["engagement_score"],
+            width="stretch"
+        )
+
+        # -------------------------------------------------
+        # ENGAGEMENT STATUS
+        # -------------------------------------------------
+
+        st.subheader("📊 Engagement Records")
+
+        display_data = student_data[
+            [
+                "timestamp",
+                "engagement_score",
+                "status"
+            ]
+        ].copy()
+
+        display_data = display_data.rename(
+            columns={
+                "timestamp": "Time",
+                "engagement_score": "Engagement",
+                "status": "Status"
+            }
+        )
+
+        display_data["Engagement"] = (
+            display_data["Engagement"]
+            .round(0)
+            .astype(int)
+            .astype(str)
+            + "%"
+        )
+
+        display_data["Time"] = (
+            pd.to_datetime(
+                display_data["Time"]
+            ).dt.strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        )
+
+        st.dataframe(
+            display_data,
+            width="stretch",
+            hide_index=True
+        )
+
+        # -------------------------------------------------
+        # LOW ENGAGEMENT PERIODS
+        # -------------------------------------------------
+
+        st.subheader("🚨 Low Engagement Periods")
+
+        if low_records.empty:
+
+            st.success(
+                "No low-engagement periods recorded "
+                "for this student."
+            )
+
+        else:
+
+            for _, row in low_records.iterrows():
+
+                st.warning(
+                    f"{row['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} — "
+                    f"{row['engagement_score']:.0f}% engagement "
+                    f"({row['status']})"
+                )
 
 elif page == "Weekly Analytics":
 
