@@ -681,10 +681,218 @@ elif page == "Student History":
 elif page == "Weekly Analytics":
 
     st.title("📈 Weekly Analytics")
-    st.info(
-        "Weekly Analytics will be implemented next."
+
+    st.caption(
+        "Weekly classroom engagement trends based on stored records"
     )
 
+    # -----------------------------------------------------
+    # CHECK DATA
+    # -----------------------------------------------------
+
+    if data.empty:
+
+        st.warning(
+            "No engagement data is currently available."
+        )
+
+    else:
+
+        weekly_data = data.copy()
+
+        # Convert timestamp to datetime
+        weekly_data["timestamp"] = pd.to_datetime(
+            weekly_data["timestamp"],
+            errors="coerce"
+        )
+
+        weekly_data = weekly_data.dropna(
+            subset=["timestamp"]
+        )
+
+        if weekly_data.empty:
+
+            st.warning(
+                "No valid timestamp data is available "
+                "for weekly analytics."
+            )
+
+        else:
+
+            # -------------------------------------------------
+            # LAST 7 DAYS
+            # -------------------------------------------------
+
+            latest_date = weekly_data[
+                "timestamp"
+            ].max()
+
+            start_date = latest_date - pd.Timedelta(
+                days=6
+            )
+
+            weekly_data = weekly_data[
+                weekly_data["timestamp"] >= start_date
+            ].copy()
+
+            # -------------------------------------------------
+            # WEEKLY METRICS
+            # -------------------------------------------------
+
+            weekly_average = weekly_data[
+                "engagement_score"
+            ].mean()
+
+            total_records = len(
+                weekly_data
+            )
+
+            low_records = weekly_data[
+                weekly_data["engagement_score"] < 60
+            ]
+
+            low_students = low_records[
+                "student_id"
+            ].nunique()
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+
+                st.metric(
+                    "Weekly Average",
+                    f"{weekly_average:.0f}%"
+                )
+
+            with col2:
+
+                st.metric(
+                    "Engagement Records",
+                    total_records
+                )
+
+            with col3:
+
+                st.metric(
+                    "Low Engagement Students",
+                    low_students
+                )
+
+            st.divider()
+
+            # -------------------------------------------------
+            # DAILY AVERAGES
+            # -------------------------------------------------
+
+            weekly_data["Date"] = (
+                weekly_data["timestamp"]
+                .dt.date
+            )
+
+            daily_average = (
+                weekly_data
+                .groupby("Date")[
+                    "engagement_score"
+                ]
+                .mean()
+                .reset_index()
+            )
+
+            daily_average[
+                "Average Engagement"
+            ] = daily_average[
+                "engagement_score"
+            ].round(1)
+
+            # -------------------------------------------------
+            # WEEKLY ENGAGEMENT GRAPH
+            # -------------------------------------------------
+
+            st.subheader(
+                "📊 Engagement Trend"
+            )
+
+            chart_data = (
+                daily_average[
+                    [
+                        "Date",
+                        "Average Engagement"
+                    ]
+                ]
+                .set_index("Date")
+            )
+
+            st.line_chart(
+                chart_data,
+                width="stretch"
+            )
+
+            # -------------------------------------------------
+            # HIGHEST / LOWEST DAY
+            # -------------------------------------------------
+
+            if not daily_average.empty:
+
+                highest_row = daily_average.loc[
+                    daily_average[
+                        "Average Engagement"
+                    ].idxmax()
+                ]
+
+                lowest_row = daily_average.loc[
+                    daily_average[
+                        "Average Engagement"
+                    ].idxmin()
+                ]
+
+                col1, col2 = st.columns(2)
+
+                with col1:
+
+                    st.success(
+                        f"Highest Engagement: "
+                        f"{highest_row['Date']} — "
+                        f"{highest_row['Average Engagement']:.0f}%"
+                    )
+
+                with col2:
+
+                    st.warning(
+                        f"Lowest Engagement: "
+                        f"{lowest_row['Date']} — "
+                        f"{lowest_row['Average Engagement']:.0f}%"
+                    )
+
+            # -------------------------------------------------
+            # DAILY ANALYTICS TABLE
+            # -------------------------------------------------
+
+            st.subheader(
+                "📅 Daily Engagement Summary"
+            )
+
+            display_daily = daily_average[
+                [
+                    "Date",
+                    "Average Engagement"
+                ]
+            ].copy()
+
+            display_daily[
+                "Average Engagement"
+            ] = (
+                display_daily[
+                    "Average Engagement"
+                ]
+                .astype(str)
+                + "%"
+            )
+
+            st.dataframe(
+                display_daily,
+                width="stretch",
+                hide_index=True
+            )
 
 elif page == "Classroom Comparison":
 
