@@ -897,10 +897,202 @@ elif page == "Weekly Analytics":
 elif page == "Classroom Comparison":
 
     st.title("🏫 Classroom Comparison")
-    st.info(
-        "Classroom Comparison will be implemented next."
+
+    st.caption(
+        "Compare engagement performance between classrooms"
     )
 
+    # -----------------------------------------------------
+    # CHECK DATA
+    # -----------------------------------------------------
+
+    if data.empty:
+
+        st.warning(
+            "No engagement data is currently available."
+        )
+
+    elif "classroom" not in data.columns:
+
+        st.info(
+            "Classroom comparison is ready, but classroom "
+            "information is not available in the current data yet."
+        )
+
+        st.warning(
+            "The current engagement data does not contain "
+            "a classroom field. Classroom comparison will "
+            "be displayed when classroom data is available "
+            "from the SQLite database."
+        )
+
+        st.subheader("Current Data Status")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.metric(
+                "Engagement Records",
+                len(data)
+            )
+
+        with col2:
+
+            st.metric(
+                "Students",
+                data["student_id"].nunique()
+            )
+
+        st.caption(
+            "No classroom values have been invented. "
+            "This page is waiting for classroom data "
+            "from the final database."
+        )
+
+    else:
+
+        # -------------------------------------------------
+        # CLASSROOM ANALYTICS
+        # -------------------------------------------------
+
+        classroom_data = data.copy()
+
+        classroom_data["engagement_score"] = pd.to_numeric(
+            classroom_data["engagement_score"],
+            errors="coerce"
+        )
+
+        classroom_data = classroom_data.dropna(
+            subset=[
+                "classroom",
+                "engagement_score"
+            ]
+        )
+
+        if classroom_data.empty:
+
+            st.warning(
+                "No valid classroom engagement records "
+                "are available."
+            )
+
+        else:
+
+            # ---------------------------------------------
+            # CLASSROOM SUMMARY
+            # ---------------------------------------------
+
+            classroom_summary = (
+                classroom_data
+                .groupby("classroom")
+                .agg(
+                    Average_Engagement=(
+                        "engagement_score",
+                        "mean"
+                    ),
+                    Students=(
+                        "student_id",
+                        "nunique"
+                    ),
+                    Records=(
+                        "student_id",
+                        "count"
+                    )
+                )
+                .reset_index()
+            )
+
+            classroom_summary[
+                "Average_Engagement"
+            ] = classroom_summary[
+                "Average_Engagement"
+            ].round(1)
+
+            # ---------------------------------------------
+            # METRICS
+            # ---------------------------------------------
+
+            total_classrooms = classroom_summary[
+                "classroom"
+            ].nunique()
+
+            overall_average = classroom_data[
+                "engagement_score"
+            ].mean()
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+
+                st.metric(
+                    "Classrooms",
+                    total_classrooms
+                )
+
+            with col2:
+
+                st.metric(
+                    "Overall Average Engagement",
+                    f"{overall_average:.0f}%"
+                )
+
+            st.divider()
+
+            # ---------------------------------------------
+            # CLASSROOM COMPARISON CHART
+            # ---------------------------------------------
+
+            st.subheader(
+                "📊 Average Engagement by Classroom"
+            )
+
+            chart_data = (
+                classroom_summary[
+                    [
+                        "classroom",
+                        "Average_Engagement"
+                    ]
+                ]
+                .set_index("classroom")
+            )
+
+            st.bar_chart(
+                chart_data,
+                width="stretch"
+            )
+
+            # ---------------------------------------------
+            # CLASSROOM TABLE
+            # ---------------------------------------------
+
+            st.subheader(
+                "📋 Classroom Summary"
+            )
+
+            display_summary = classroom_summary.rename(
+                columns={
+                    "classroom": "Classroom",
+                    "Average_Engagement":
+                        "Average Engagement"
+                }
+            )
+
+            display_summary[
+                "Average Engagement"
+            ] = (
+                display_summary[
+                    "Average Engagement"
+                ]
+                .astype(str)
+                + "%"
+            )
+
+            st.dataframe(
+                display_summary,
+                width="stretch",
+                hide_index=True
+            )
 
 elif page == "Session History":
 
