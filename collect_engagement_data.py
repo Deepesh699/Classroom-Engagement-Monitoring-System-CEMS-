@@ -29,10 +29,21 @@ CAMERA_INDEX = 0
 
 YUNET_CONFIDENCE = 0.75
 
-WINDOW_SECONDS = 3.0
 
-# Save one temporal sample every 0.5 seconds
-SAVE_INTERVAL = 0.50
+# ============================================================
+# TEMPORAL SETTINGS
+# ============================================================
+
+# Engagement is analysed over the most recent 10 seconds.
+WINDOW_SECONDS = 10.0
+
+# Save approximately one independent temporal sample every
+# 10 seconds.
+#
+# This is intentionally not 0.5 seconds because extremely
+# overlapping samples can make evaluation look unrealistically
+# strong.
+SAVE_INTERVAL = 10.0
 
 
 # ============================================================
@@ -62,6 +73,7 @@ CSV_COLUMNS = [
     "face_visible_ratio",
 
     "head_movement",
+
     "orientation_change_rate",
 
     "mean_confidence",
@@ -71,34 +83,24 @@ CSV_COLUMNS = [
 
 
 # ============================================================
-# PREPARE CSV
+# CREATE DATASET IF NEEDED
 # ============================================================
 
 def prepare_csv():
-    """
-    Create the data folder and CSV file if they do not exist.
-    Existing data is NOT deleted.
-    New samples are appended.
-    """
-
     os.makedirs(
         DATA_FOLDER,
         exist_ok=True
     )
 
-    file_exists = os.path.exists(
+    if not os.path.exists(
         CSV_PATH
-    )
-
-    if not file_exists:
-
+    ):
         with open(
             CSV_PATH,
             "w",
             newline="",
             encoding="utf-8"
         ) as file:
-
             writer = csv.DictWriter(
                 file,
                 fieldnames=CSV_COLUMNS
@@ -115,15 +117,13 @@ def save_sample(
     summary,
     label
 ):
-    """
-    Save one 3-second temporal summary into the CSV.
-    """
-
     row = dict(
         summary
     )
 
-    row["label"] = label
+    row["label"] = (
+        label
+    )
 
     with open(
         CSV_PATH,
@@ -131,7 +131,6 @@ def save_sample(
         newline="",
         encoding="utf-8"
     ) as file:
-
         writer = csv.DictWriter(
             file,
             fieldnames=CSV_COLUMNS
@@ -143,18 +142,13 @@ def save_sample(
 
 
 # ============================================================
-# COUNT CURRENT DATASET SAMPLES
+# COUNT EXISTING SAMPLES
 # ============================================================
 
 def count_samples():
-    """
-    Count saved rows excluding the CSV header.
-    """
-
     if not os.path.exists(
         CSV_PATH
     ):
-
         return 0
 
     with open(
@@ -162,45 +156,38 @@ def count_samples():
         "r",
         encoding="utf-8"
     ) as file:
-
-        line_count = sum(
+        lines = sum(
             1
             for _ in file
         )
 
     return max(
         0,
-        line_count - 1
+        lines - 1
     )
 
 
 # ============================================================
-# CHOOSE MAIN FACE
+# SELECT MAIN FACE
+#
+# For training data collection we use the largest detected
+# face so that one person is labelled at a time.
 # ============================================================
 
 def choose_largest_face(
     detections
 ):
-    """
-    Training is intentionally done with one main person.
-
-    If several faces are visible, use the largest face.
-    """
-
     if detections is None:
-
         return None
 
     valid_faces = []
 
     for detection in detections:
-
         confidence = float(
             detection[14]
         )
 
         if confidence < YUNET_CONFIDENCE:
-
             continue
 
         width = float(
@@ -213,7 +200,8 @@ def choose_largest_face(
 
         area = (
             width
-            * height
+            *
+            height
         )
 
         valid_faces.append(
@@ -224,7 +212,6 @@ def choose_largest_face(
         )
 
     if not valid_faces:
-
         return None
 
     valid_faces.sort(
@@ -233,11 +220,13 @@ def choose_largest_face(
         reverse=True
     )
 
-    return valid_faces[0][1]
+    return (
+        valid_faces[0][1]
+    )
 
 
 # ============================================================
-# DRAW STATUS PANEL
+# DRAW INFORMATION PANEL
 # ============================================================
 
 def draw_panel(
@@ -246,37 +235,37 @@ def draw_panel(
     orientation,
     sample_count,
     window_ready,
+    window_duration,
     current_features
 ):
-
     height, width = (
         frame.shape[:2]
     )
 
     panel_width = min(
-        700,
+        760,
         width - 20
     )
 
     cv2.rectangle(
         frame,
         (10, 10),
-        (panel_width, 250),
+        (panel_width, 315),
         (0, 0, 0),
         -1
     )
 
     # --------------------------------------------------------
-    # CURRENT LABEL
+    # CURRENT TRAINING LABEL
     # --------------------------------------------------------
 
     if current_label is None:
-
         label_text = "PAUSED"
 
     else:
-
-        label_text = current_label
+        label_text = (
+            current_label
+        )
 
     cv2.putText(
         frame,
@@ -290,7 +279,7 @@ def draw_panel(
     )
 
     # --------------------------------------------------------
-    # ORIENTATION
+    # CURRENT ORIENTATION
     # --------------------------------------------------------
 
     cv2.putText(
@@ -305,12 +294,12 @@ def draw_panel(
     )
 
     # --------------------------------------------------------
-    # DATASET COUNT
+    # SAVED SAMPLES
     # --------------------------------------------------------
 
     cv2.putText(
         frame,
-        f"Saved samples: {sample_count}",
+        f"Saved Samples: {sample_count}",
         (25, 115),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.65,
@@ -320,24 +309,16 @@ def draw_panel(
     )
 
     # --------------------------------------------------------
-    # TEMPORAL WINDOW STATUS
+    # WINDOW PROGRESS
     # --------------------------------------------------------
-
-    if window_ready:
-
-        window_text = (
-            "Temporal window: READY"
-        )
-
-    else:
-
-        window_text = (
-            "Temporal window: collecting..."
-        )
 
     cv2.putText(
         frame,
-        window_text,
+        (
+            f"Behaviour Window: "
+            f"{window_duration:.1f} / "
+            f"{WINDOW_SECONDS:.0f} sec"
+        ),
         (25, 150),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.60,
@@ -346,27 +327,61 @@ def draw_panel(
         cv2.LINE_AA
     )
 
+    if window_ready:
+        window_text = (
+            "Temporal Window: READY"
+        )
+
+    else:
+        window_text = (
+            "Temporal Window: COLLECTING"
+        )
+
+    cv2.putText(
+        frame,
+        window_text,
+        (25, 185),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
     # --------------------------------------------------------
-    # LIVE BEHAVIOURAL SIGNALS
+    # CURRENT FRAME FEATURES
     # --------------------------------------------------------
 
     if current_features is not None:
+        yaw = (
+            current_features[
+                "yaw"
+            ]
+        )
 
-        yaw = current_features[
-            "yaw"
-        ]
+        pitch = (
+            current_features[
+                "pitch"
+            ]
+        )
 
-        pitch = current_features[
-            "pitch"
-        ]
+        downward = (
+            current_features[
+                "downward_severity"
+            ]
+        )
 
-        downward = current_features[
-            "downward_severity"
-        ]
+        away = (
+            current_features[
+                "away"
+            ]
+        )
 
-        away = current_features[
-            "away"
-        ]
+        confidence = (
+            current_features[
+                "confidence"
+            ]
+        )
 
         cv2.putText(
             frame,
@@ -374,7 +389,28 @@ def draw_panel(
                 f"Yaw: {yaw:.3f} | "
                 f"Pitch: {pitch:.3f}"
             ),
-            (25, 185),
+            (25, 220),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA
+        )
+
+        away_text = (
+            "Yes"
+            if away
+            else "No"
+        )
+
+        cv2.putText(
+            frame,
+            (
+                f"Downward Level: "
+                f"{downward * 100:.0f}% | "
+                f"Looking Away: {away_text}"
+            ),
+            (25, 255),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (255, 255, 255),
@@ -385,10 +421,10 @@ def draw_panel(
         cv2.putText(
             frame,
             (
-                f"Down severity: {downward:.2f} | "
-                f"Away: {away}"
+                f"YuNet Face Confidence: "
+                f"{confidence * 100:.1f}%"
             ),
-            (25, 220),
+            (25, 290),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.55,
             (255, 255, 255),
@@ -402,61 +438,22 @@ def draw_panel(
 # ============================================================
 
 def print_controls():
-
     print()
-
-    print(
-        "======================================"
-    )
-
-    print(
-        " CEMS ENGAGEMENT DATA COLLECTION V2"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" CEMS ENGAGEMENT DATA COLLECTION V2")
+    print(" 10-SECOND TEMPORAL WINDOW")
+    print("==========================================")
     print()
-
-    print(
-        "1 = Engaged"
-    )
-
-    print(
-        "2 = Neutral"
-    )
-
-    print(
-        "3 = Low Engagement"
-    )
-
-    print(
-        "0 = Pause recording"
-    )
-
-    print(
-        "Q = Quit"
-    )
-
+    print("1 = Engaged")
+    print("2 = Neutral")
+    print("3 = Low Engagement")
+    print("0 = Pause")
+    print("Q = Quit")
     print()
-
     print(
-        "IMPORTANT:"
+        "Perform each behaviour naturally for "
+        "at least 30-60 seconds."
     )
-
-    print(
-        "Select the label BEFORE performing "
-        "the behaviour."
-    )
-
-    print()
-
-    print(
-        "Try to perform natural behaviours, "
-        "not exaggerated poses."
-    )
-
     print()
 
 
@@ -473,22 +470,14 @@ def main():
     if not os.path.exists(
         YUNET_MODEL_PATH
     ):
-
         print()
-
         print(
             "ERROR: YuNet model not found:"
         )
-
         print(
             YUNET_MODEL_PATH
         )
-
         return
-
-    # --------------------------------------------------------
-    # PREPARE DATASET
-    # --------------------------------------------------------
 
     prepare_csv()
 
@@ -497,17 +486,14 @@ def main():
     )
 
     # --------------------------------------------------------
-    # CREATE YUNET
+    # CREATE YUNET DETECTOR
     # --------------------------------------------------------
 
     detector = (
         cv2.FaceDetectorYN.create(
             YUNET_MODEL_PATH,
             "",
-            (
-                320,
-                320
-            ),
+            (320, 320),
             YUNET_CONFIDENCE,
             0.3,
             5000
@@ -523,13 +509,9 @@ def main():
     )
 
     if not camera.isOpened():
-
-        print()
-
         print(
             "ERROR: Could not open camera."
         )
-
         return
 
     camera.set(
@@ -543,7 +525,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # TEMPORAL WINDOW
+    # CREATE 10-SECOND TEMPORAL WINDOW
     # --------------------------------------------------------
 
     temporal_window = (
@@ -570,7 +552,7 @@ def main():
     print()
 
     # ========================================================
-    # MAIN CAMERA LOOP
+    # CAMERA LOOP
     # ========================================================
 
     while True:
@@ -580,16 +562,18 @@ def main():
         )
 
         if not success:
-
             print(
                 "Could not read camera frame."
             )
-
             break
 
         height, width = (
             frame.shape[:2]
         )
+
+        # ----------------------------------------------------
+        # UPDATE YUNET INPUT SIZE
+        # ----------------------------------------------------
 
         detector.setInputSize(
             (
@@ -599,7 +583,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # YUNET DETECTION
+        # FACE DETECTION
         # ----------------------------------------------------
 
         _, detections = (
@@ -621,7 +605,7 @@ def main():
         current_features = None
 
         # ====================================================
-        # FACE FOUND
+        # FACE DETECTED
         # ====================================================
 
         if detection is not None:
@@ -643,7 +627,7 @@ def main():
             )
 
             # ------------------------------------------------
-            # FACE BOX
+            # DRAW FACE BOX
             # ------------------------------------------------
 
             x = int(
@@ -702,19 +686,16 @@ def main():
             )
 
         # ====================================================
-        # FACE NOT FOUND
+        # FACE NOT DETECTED
         # ====================================================
 
         else:
-
-            # None means the temporal window knows
-            # the face was not visible during this frame.
             temporal_window.add(
                 None
             )
 
         # ====================================================
-        # SAVE TEMPORAL SAMPLE
+        # WINDOW STATUS
         # ====================================================
 
         now = time.monotonic()
@@ -722,6 +703,14 @@ def main():
         window_ready = (
             temporal_window.ready()
         )
+
+        window_duration = (
+            temporal_window.duration()
+        )
+
+        # ====================================================
+        # SAVE TRAINING SAMPLE
+        # ====================================================
 
         if (
             current_label is not None
@@ -731,13 +720,11 @@ def main():
             now - last_save_time
             >= SAVE_INTERVAL
         ):
-
             summary = (
                 temporal_window.summarize()
             )
 
             if summary is not None:
-
                 save_sample(
                     summary,
                     current_label
@@ -745,10 +732,18 @@ def main():
 
                 sample_count += 1
 
-                last_save_time = now
+                last_save_time = (
+                    now
+                )
+
+                print(
+                    f"Saved sample "
+                    f"#{sample_count} "
+                    f"-> {current_label}"
+                )
 
         # ====================================================
-        # DRAW UI
+        # INFORMATION PANEL
         # ====================================================
 
         draw_panel(
@@ -757,8 +752,13 @@ def main():
             orientation,
             sample_count,
             window_ready,
+            window_duration,
             current_features
         )
+
+        # ----------------------------------------------------
+        # CONTROLS AT BOTTOM
+        # ----------------------------------------------------
 
         cv2.putText(
             frame,
@@ -775,17 +775,20 @@ def main():
             ),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.60,
-            (
-                255,
-                255,
-                255
-            ),
+            (255, 255, 255),
             2,
             cv2.LINE_AA
         )
 
+        # ----------------------------------------------------
+        # SHOW WINDOW
+        # ----------------------------------------------------
+
         cv2.imshow(
-            "CEMS - Engagement Training Data V2",
+            (
+                "CEMS - Engagement Data Collection V2 "
+                "(10 Seconds)"
+            ),
             frame
         )
 
@@ -798,9 +801,7 @@ def main():
         # LABEL CONTROLS
         # ====================================================
 
-        if key == ord(
-            "1"
-        ):
+        if key == ord("1"):
 
             current_label = (
                 "Engaged"
@@ -813,14 +814,11 @@ def main():
             )
 
             print()
-
             print(
                 "Recording: ENGAGED"
             )
 
-        elif key == ord(
-            "2"
-        ):
+        elif key == ord("2"):
 
             current_label = (
                 "Neutral"
@@ -833,14 +831,11 @@ def main():
             )
 
             print()
-
             print(
                 "Recording: NEUTRAL"
             )
 
-        elif key == ord(
-            "3"
-        ):
+        elif key == ord("3"):
 
             current_label = (
                 "Low Engagement"
@@ -853,28 +848,22 @@ def main():
             )
 
             print()
-
             print(
                 "Recording: LOW ENGAGEMENT"
             )
 
-        elif key == ord(
-            "0"
-        ):
+        elif key == ord("0"):
 
             current_label = None
 
             temporal_window.clear()
 
             print()
-
             print(
                 "Recording paused."
             )
 
-        elif key == ord(
-            "q"
-        ):
+        elif key == ord("q"):
 
             break
 
@@ -887,30 +876,21 @@ def main():
     cv2.destroyAllWindows()
 
     print()
-
-    print(
-        "======================================"
-    )
-
-    print(
-        "DATA COLLECTION FINISHED"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" DATA COLLECTION FINISHED")
+    print("==========================================")
     print(
         f"Dataset: {CSV_PATH}"
     )
-
     print(
         f"Total samples: {sample_count}"
     )
-
     print()
 
 
-if __name__ == "__main__":
+# ============================================================
+# RUN
+# ============================================================
 
+if __name__ == "__main__":
     main()

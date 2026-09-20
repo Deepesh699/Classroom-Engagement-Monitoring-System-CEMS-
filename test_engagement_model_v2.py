@@ -24,21 +24,25 @@ ENGAGEMENT_MODEL_PATH = (
 
 YUNET_CONFIDENCE = 0.75
 
-WINDOW_SECONDS = 3.0
-
 CAMERA_INDEX = 0
 
 
 # ============================================================
-# LOAD MODEL
+# LOAD TRAINED ENGAGEMENT MODEL
 # ============================================================
 
 def load_engagement_model():
+    """
+    Load the trained Random Forest model bundle.
+
+    The temporal window duration is read directly from the
+    saved model so the live test always uses the same window
+    duration that was used during training.
+    """
 
     if not os.path.exists(
         ENGAGEMENT_MODEL_PATH
     ):
-
         raise FileNotFoundError(
             f"Model not found: "
             f"{ENGAGEMENT_MODEL_PATH}"
@@ -48,22 +52,68 @@ def load_engagement_model():
         ENGAGEMENT_MODEL_PATH
     )
 
+    model = (
+        bundle[
+            "model"
+        ]
+    )
+
+    # --------------------------------------------------------
+    # USE ONE CPU THREAD DURING LIVE PREDICTION
+    #
+    # This does not modify the trained Random Forest.
+    # It simply avoids unnecessary parallel-processing
+    # warnings during live prediction.
+    # --------------------------------------------------------
+
+    model.n_jobs = 1
+
+    feature_columns = (
+        bundle[
+            "features"
+        ]
+    )
+
+    # --------------------------------------------------------
+    # READ WINDOW FROM TRAINED MODEL
+    #
+    # Current model should contain:
+    #
+    # "window_seconds": 10.0
+    #
+    # 10.0 is also used as the fallback.
+    # --------------------------------------------------------
+
+    window_seconds = float(
+        bundle.get(
+            "window_seconds",
+            10.0
+        )
+    )
+
     return (
-        bundle["model"],
-        bundle["features"]
+        model,
+        feature_columns,
+        window_seconds
     )
 
 
 # ============================================================
-# CHOOSE MAIN FACE
+# SELECT MAIN FACE
 # ============================================================
 
 def choose_largest_face(
     detections
 ):
+    """
+    For this single-person live ML test, select the largest
+    valid detected face.
+
+    Multi-student processing will later happen inside the
+    tracking pipeline using one temporal history per track_id.
+    """
 
     if detections is None:
-
         return None
 
     valid_faces = []
@@ -74,11 +124,7 @@ def choose_largest_face(
             detection[14]
         )
 
-        if (
-            confidence
-            < YUNET_CONFIDENCE
-        ):
-
+        if confidence < YUNET_CONFIDENCE:
             continue
 
         width = float(
@@ -91,7 +137,8 @@ def choose_largest_face(
 
         area = (
             width
-            * height
+            *
+            height
         )
 
         valid_faces.append(
@@ -102,7 +149,6 @@ def choose_largest_face(
         )
 
     if not valid_faces:
-
         return None
 
     valid_faces.sort(
@@ -117,7 +163,7 @@ def choose_largest_face(
 
 
 # ============================================================
-# CALCULATE ENGAGEMENT SCORE
+# CALCULATE DISPLAY ENGAGEMENT SCORE
 # ============================================================
 
 def calculate_engagement_score(
@@ -125,21 +171,37 @@ def calculate_engagement_score(
     probabilities
 ):
     """
-    Convert class probabilities into a display score.
+    Convert Random Forest class probabilities into the
+    display engagement score.
 
-    This is a derived engagement score,
-    not a separately trained continuous target.
+    IMPORTANT:
+
+    This is a derived display score.
+
+    The Random Forest is trained to classify:
+
+        Engaged
+        Neutral
+        Low Engagement
+
+    It is not trained directly to predict a continuous
+    percentage score.
     """
 
     probability_map = {}
 
-    for class_name, probability in zip(
+    for (
+        class_name,
+        probability
+    ) in zip(
         model.classes_,
         probabilities
     ):
 
         probability_map[
-            class_name
+            str(
+                class_name
+            )
         ] = float(
             probability
         )
@@ -165,13 +227,9 @@ def calculate_engagement_score(
         )
     )
 
-    # Weighted class score:
-    #
-    # Engaged        ~ 90
-    # Neutral        ~ 60
-    # Low Engagement ~ 30
-    #
-    # Probabilities allow smooth transitions.
+    # --------------------------------------------------------
+    # WEIGHTED DISPLAY SCORE
+    # --------------------------------------------------------
 
     score = (
         engaged_probability
@@ -192,7 +250,8 @@ def calculate_engagement_score(
         score
     )
 
-    score = max(
+    # Keep display score in a sensible visible range.
+    return max(
         20,
         min(
             95,
@@ -200,11 +259,9 @@ def calculate_engagement_score(
         )
     )
 
-    return score
-
 
 # ============================================================
-# DRAW PANEL
+# DRAW INFORMATION PANEL
 # ============================================================
 
 def draw_panel(
@@ -214,16 +271,29 @@ def draw_panel(
     model_confidence,
     orientation,
     window_ready,
+    window_duration,
+    window_seconds,
     current_features
 ):
+    """
+    Draw live engagement information on the video frame.
+    """
+
+    # --------------------------------------------------------
+    # PANEL BACKGROUND
+    # --------------------------------------------------------
 
     cv2.rectangle(
         frame,
         (10, 10),
-        (680, 265),
+        (780, 350),
         (0, 0, 0),
         -1
     )
+
+    # --------------------------------------------------------
+    # ML ENGAGEMENT CLASS
+    # --------------------------------------------------------
 
     cv2.putText(
         frame,
@@ -236,6 +306,10 @@ def draw_panel(
         cv2.LINE_AA
     )
 
+    # --------------------------------------------------------
+    # DERIVED ENGAGEMENT SCORE
+    # --------------------------------------------------------
+
     cv2.putText(
         frame,
         f"Engagement Score: {score}%",
@@ -247,10 +321,14 @@ def draw_panel(
         cv2.LINE_AA
     )
 
+    # --------------------------------------------------------
+    # RANDOM FOREST CONFIDENCE
+    # --------------------------------------------------------
+
     cv2.putText(
         frame,
         (
-            "Model confidence: "
+            "Model Confidence: "
             f"{model_confidence:.1%}"
         ),
         (25, 115),
@@ -261,9 +339,16 @@ def draw_panel(
         cv2.LINE_AA
     )
 
+    # --------------------------------------------------------
+    # CURRENT ORIENTATION
+    # --------------------------------------------------------
+
     cv2.putText(
         frame,
-        f"Orientation: {orientation}",
+        (
+            f"Orientation: "
+            f"{orientation}"
+        ),
         (25, 150),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.60,
@@ -272,28 +357,61 @@ def draw_panel(
         cv2.LINE_AA
     )
 
-    if window_ready:
-
-        window_text = (
-            "3-second behaviour window: READY"
-        )
-
-    else:
-
-        window_text = (
-            "3-second behaviour window: collecting..."
-        )
+    # --------------------------------------------------------
+    # WINDOW PROGRESS
+    # --------------------------------------------------------
 
     cv2.putText(
         frame,
-        window_text,
+        (
+            f"Behaviour History: "
+            f"{window_duration:.1f} / "
+            f"{window_seconds:.0f} sec"
+        ),
         (25, 185),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.55,
+        0.58,
         (255, 255, 255),
         2,
         cv2.LINE_AA
     )
+
+    # --------------------------------------------------------
+    # WINDOW READY STATUS
+    #
+    # IMPORTANT:
+    # Duration is generated dynamically from window_seconds.
+    # Nothing is hardcoded to 10 or 15 here.
+    # --------------------------------------------------------
+
+    if window_ready:
+
+        readiness = (
+            f"{window_seconds:.0f}-second "
+            f"window: READY"
+        )
+
+    else:
+
+        readiness = (
+            f"{window_seconds:.0f}-second "
+            f"window: COLLECTING"
+        )
+
+    cv2.putText(
+        frame,
+        readiness,
+        (25, 220),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    # --------------------------------------------------------
+    # CURRENT FRAME BEHAVIOURAL FEATURES
+    # --------------------------------------------------------
 
     if current_features is not None:
 
@@ -321,13 +439,23 @@ def draw_panel(
             ]
         )
 
+        face_confidence = (
+            current_features[
+                "confidence"
+            ]
+        )
+
+        # ----------------------------------------------------
+        # YAW / PITCH
+        # ----------------------------------------------------
+
         cv2.putText(
             frame,
             (
                 f"Yaw: {yaw:.3f} | "
                 f"Pitch: {pitch:.3f}"
             ),
-            (25, 220),
+            (25, 255),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.52,
             (255, 255, 255),
@@ -335,13 +463,44 @@ def draw_panel(
             cv2.LINE_AA
         )
 
+        # ----------------------------------------------------
+        # LOOKING AWAY
+        # ----------------------------------------------------
+
+        if away:
+            away_text = "Yes"
+
+        else:
+            away_text = "No"
+
         cv2.putText(
             frame,
             (
-                f"Down: {downward:.2f} | "
-                f"Away: {away}"
+                f"Downward Level: "
+                f"{downward * 100:.0f}% | "
+                f"Looking Away: {away_text}"
             ),
-            (360, 220),
+            (25, 290),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA
+        )
+
+        # ----------------------------------------------------
+        # YUNET DETECTOR CONFIDENCE
+        #
+        # This is NOT the Random Forest engagement confidence.
+        # ----------------------------------------------------
+
+        cv2.putText(
+            frame,
+            (
+                f"YuNet Face Confidence: "
+                f"{face_confidence * 100:.1f}%"
+            ),
+            (25, 325),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.52,
             (255, 255, 255),
@@ -357,63 +516,89 @@ def draw_panel(
 def main():
 
     # --------------------------------------------------------
-    # CHECK YUNET
+    # CHECK YUNET FILE
     # --------------------------------------------------------
 
     if not os.path.exists(
         YUNET_MODEL_PATH
     ):
 
+        print()
+
         print(
-            "ERROR: YuNet model not found."
+            "ERROR: YuNet model not found:"
+        )
+
+        print(
+            YUNET_MODEL_PATH
         )
 
         return
 
     # --------------------------------------------------------
-    # LOAD ENGAGEMENT MODEL
+    # LOAD RANDOM FOREST MODEL
     # --------------------------------------------------------
 
     try:
 
         (
             model,
-            feature_columns
+            feature_columns,
+            window_seconds
         ) = load_engagement_model()
 
     except Exception as error:
 
+        print()
+
         print(
-            f"ERROR loading model: "
-            f"{error}"
+            "ERROR loading engagement model:"
+        )
+
+        print(
+            error
         )
 
         return
 
-    print()
-    print(
-        "======================================"
-    )
-    print(
-        " CEMS LIVE ML ENGAGEMENT TEST"
-    )
-    print(
-        "======================================"
-    )
-    print()
-
-    print(
-        "Model loaded:"
-    )
-
-    print(
-        ENGAGEMENT_MODEL_PATH
-    )
+    # ========================================================
+    # STARTUP INFORMATION
+    # ========================================================
 
     print()
 
     print(
-        "Model classes:"
+        "=========================================="
+    )
+
+    print(
+        " CEMS LIVE ML ENGAGEMENT V2"
+    )
+
+    print(
+        f" {window_seconds:.0f}-SECOND TEMPORAL WINDOW"
+    )
+
+    print(
+        "=========================================="
+    )
+
+    print()
+
+    print(
+        f"Model: "
+        f"{ENGAGEMENT_MODEL_PATH}"
+    )
+
+    print(
+        f"Temporal Window: "
+        f"{window_seconds:.0f} seconds"
+    )
+
+    print()
+
+    print(
+        "Model Classes:"
     )
 
     print(
@@ -422,9 +607,15 @@ def main():
 
     print()
 
-    # --------------------------------------------------------
-    # YUNET
-    # --------------------------------------------------------
+    print(
+        "Live prediction CPU threads: 1"
+    )
+
+    print()
+
+    # ========================================================
+    # CREATE YUNET DETECTOR
+    # ========================================================
 
     detector = (
         cv2.FaceDetectorYN.create(
@@ -437,9 +628,9 @@ def main():
         )
     )
 
-    # --------------------------------------------------------
-    # CAMERA
-    # --------------------------------------------------------
+    # ========================================================
+    # OPEN CAMERA
+    # ========================================================
 
     camera = cv2.VideoCapture(
         CAMERA_INDEX
@@ -463,16 +654,22 @@ def main():
         720
     )
 
-    # --------------------------------------------------------
-    # TEMPORAL WINDOW
-    # --------------------------------------------------------
+    # ========================================================
+    # CREATE TEMPORAL WINDOW
+    #
+    # This gets its duration from the saved trained model.
+    # ========================================================
 
     temporal_window = (
         TemporalFeatureWindow(
             window_seconds=
-            WINDOW_SECONDS
+            window_seconds
         )
     )
+
+    # ========================================================
+    # INITIAL DISPLAY VALUES
+    # ========================================================
 
     status = (
         "Collecting..."
@@ -487,12 +684,9 @@ def main():
     )
 
     print(
-        "Move naturally."
-    )
-
-    print(
-        "Try forward, looking down, "
-        "sideways and mixed behaviour."
+        f"Collecting approximately "
+        f"{window_seconds:.0f} seconds "
+        f"before the first prediction."
     )
 
     print()
@@ -504,7 +698,7 @@ def main():
     print()
 
     # ========================================================
-    # LIVE LOOP
+    # LIVE CAMERA LOOP
     # ========================================================
 
     while True:
@@ -525,6 +719,10 @@ def main():
             frame.shape[:2]
         )
 
+        # ----------------------------------------------------
+        # UPDATE YUNET INPUT SIZE
+        # ----------------------------------------------------
+
         detector.setInputSize(
             (
                 width,
@@ -533,7 +731,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # FACE DETECTION
+        # DETECT FACES
         # ----------------------------------------------------
 
         _, detections = (
@@ -551,10 +749,14 @@ def main():
         current_features = None
 
         # ====================================================
-        # FACE FOUND
+        # FACE DETECTED
         # ====================================================
 
         if detection is not None:
+
+            # ------------------------------------------------
+            # EXTRACT CURRENT-FRAME BEHAVIOURAL FEATURES
+            # ------------------------------------------------
 
             current_features = (
                 extract_frame_features(
@@ -562,15 +764,27 @@ def main():
                 )
             )
 
+            # ------------------------------------------------
+            # ADD CURRENT FRAME TO TEMPORAL HISTORY
+            # ------------------------------------------------
+
             temporal_window.add(
                 current_features
             )
+
+            # ------------------------------------------------
+            # CURRENT HEAD ORIENTATION
+            # ------------------------------------------------
 
             orientation = (
                 current_features[
                     "orientation"
                 ]
             )
+
+            # ------------------------------------------------
+            # FACE BOUNDING BOX
+            # ------------------------------------------------
 
             x = int(
                 detection[0]
@@ -590,21 +804,54 @@ def main():
 
             cv2.rectangle(
                 frame,
-                (x, y),
+                (
+                    x,
+                    y
+                ),
                 (
                     x + w,
                     y + h
                 ),
-                (0, 255, 0),
+                (
+                    0,
+                    255,
+                    0
+                ),
                 2
             )
 
+            # ------------------------------------------------
+            # ORIENTATION LABEL ABOVE FACE
+            # ------------------------------------------------
+
+            cv2.putText(
+                frame,
+                orientation,
+                (
+                    x,
+                    max(
+                        25,
+                        y - 10
+                    )
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.60,
+                (
+                    0,
+                    255,
+                    0
+                ),
+                2,
+                cv2.LINE_AA
+            )
+
         # ====================================================
-        # FACE NOT FOUND
+        # FACE NOT DETECTED
         # ====================================================
 
         else:
 
+            # Store missing visibility in temporal history.
             temporal_window.add(
                 None
             )
@@ -614,12 +861,20 @@ def main():
             )
 
         # ====================================================
-        # ML PREDICTION
+        # TEMPORAL WINDOW STATUS
         # ====================================================
 
         window_ready = (
             temporal_window.ready()
         )
+
+        window_duration = (
+            temporal_window.duration()
+        )
+
+        # ====================================================
+        # RANDOM FOREST ENGAGEMENT PREDICTION
+        # ====================================================
 
         if window_ready:
 
@@ -630,7 +885,7 @@ def main():
             if summary is not None:
 
                 # --------------------------------------------
-                # EXACT FEATURES EXPECTED BY TRAINED MODEL
+                # BUILD EXACT FEATURE VECTOR USED BY TRAINING
                 # --------------------------------------------
 
                 model_input = {
@@ -643,18 +898,16 @@ def main():
                     in feature_columns
                 }
 
-                input_df = (
-                    pd.DataFrame(
-                        [
-                            model_input
-                        ],
-                        columns=
-                        feature_columns
-                    )
+                input_df = pd.DataFrame(
+                    [
+                        model_input
+                    ],
+                    columns=
+                    feature_columns
                 )
 
                 # --------------------------------------------
-                # CLASS
+                # PREDICT ENGAGEMENT CLASS
                 # --------------------------------------------
 
                 prediction = (
@@ -664,7 +917,7 @@ def main():
                 )
 
                 # --------------------------------------------
-                # PROBABILITIES
+                # GET RANDOM FOREST CLASS PROBABILITIES
                 # --------------------------------------------
 
                 probabilities = (
@@ -673,19 +926,33 @@ def main():
                     )[0]
                 )
 
-                status = (
-                    str(
-                        prediction
+                # --------------------------------------------
+                # ENGAGEMENT CLASS
+                # --------------------------------------------
+
+                status = str(
+                    prediction
+                )
+
+                # --------------------------------------------
+                # MODEL CONFIDENCE
+                #
+                # Highest probability among:
+                #
+                # Engaged
+                # Neutral
+                # Low Engagement
+                # --------------------------------------------
+
+                model_confidence = float(
+                    max(
+                        probabilities
                     )
                 )
 
-                model_confidence = (
-                    float(
-                        max(
-                            probabilities
-                        )
-                    )
-                )
+                # --------------------------------------------
+                # DERIVED DISPLAY SCORE
+                # --------------------------------------------
 
                 score = (
                     calculate_engagement_score(
@@ -714,10 +981,7 @@ def main():
                 255
             )
 
-        elif (
-            status
-            == "Low Engagement"
-        ):
+        elif status == "Low Engagement":
 
             status_colour = (
                 0,
@@ -734,7 +998,7 @@ def main():
             )
 
         # ====================================================
-        # MAIN RESULT TEXT
+        # MAIN RESULT AT BOTTOM OF SCREEN
         # ====================================================
 
         cv2.putText(
@@ -755,7 +1019,7 @@ def main():
         )
 
         # ====================================================
-        # INFORMATION PANEL
+        # DRAW INFORMATION PANEL
         # ====================================================
 
         draw_panel(
@@ -765,15 +1029,24 @@ def main():
             model_confidence,
             orientation,
             window_ready,
+            window_duration,
+            window_seconds,
             current_features
         )
 
         # ====================================================
-        # DISPLAY
+        # WINDOW TITLE
+        #
+        # Also generated from the real model duration.
         # ====================================================
 
+        window_title = (
+            "CEMS - ML Engagement V2 "
+            f"({window_seconds:.0f} Seconds)"
+        )
+
         cv2.imshow(
-            "CEMS - Live ML Engagement V2",
+            window_title,
             frame
         )
 
@@ -782,8 +1055,11 @@ def main():
             & 0xFF
         )
 
-        if key == ord("q"):
+        # ----------------------------------------------------
+        # QUIT
+        # ----------------------------------------------------
 
+        if key == ord("q"):
             break
 
     # ========================================================
@@ -800,7 +1076,12 @@ def main():
         "Live engagement test finished."
     )
 
+    print()
+
+
+# ============================================================
+# RUN PROGRAM
+# ============================================================
 
 if __name__ == "__main__":
-
     main()

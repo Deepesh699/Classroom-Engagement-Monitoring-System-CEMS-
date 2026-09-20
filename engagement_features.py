@@ -14,20 +14,29 @@ def extract_frame_features(detection):
     Extract observable behavioural features from one
     YuNet face detection.
 
-    YuNet:
+    YuNet detection format:
+
         0-3   = face bounding box
         4-5   = right eye
         6-7   = left eye
         8-9   = nose
-        10-11 = right mouth
-        12-13 = left mouth
-        14    = confidence
+        10-11 = right mouth corner
+        12-13 = left mouth corner
+        14    = face detection confidence
     """
+
+    # --------------------------------------------------------
+    # FACE BOUNDING BOX
+    # --------------------------------------------------------
 
     x = float(detection[0])
     y = float(detection[1])
     w = float(detection[2])
     h = float(detection[3])
+
+    # --------------------------------------------------------
+    # LANDMARKS
+    # --------------------------------------------------------
 
     right_eye = (
         float(detection[4]),
@@ -54,7 +63,9 @@ def extract_frame_features(detection):
         float(detection[13])
     )
 
-    confidence = float(detection[14])
+    confidence = float(
+        detection[14]
+    )
 
     # ========================================================
     # LANDMARK MIDPOINTS
@@ -107,6 +118,8 @@ def extract_frame_features(detection):
 
     # ========================================================
     # YAW
+    #
+    # Horizontal head direction.
     # ========================================================
 
     yaw = (
@@ -115,6 +128,8 @@ def extract_frame_features(detection):
 
     # ========================================================
     # PITCH
+    #
+    # Vertical head direction.
     # ========================================================
 
     pitch = (
@@ -123,6 +138,8 @@ def extract_frame_features(detection):
 
     # ========================================================
     # ROLL
+    #
+    # Sideways head tilt.
     # ========================================================
 
     roll_radians = math.atan2(
@@ -139,23 +156,22 @@ def extract_frame_features(detection):
     # ========================================================
 
     eye_distance_ratio = (
-        eye_distance
-        / face_width
+        eye_distance / face_width
     )
 
     # ========================================================
-    # BEHAVIOURAL SIGNALS
+    # LOOKING DOWN
     # ========================================================
 
-    # Looking down threshold.
     looking_down = (
         pitch > 0.72
     )
 
-    # Continuous downward value instead of only True / False.
+    # Continuous downward severity.
     #
-    # 0.0 = not meaningfully downward
-    # 1.0 = strongly downward
+    # Around 0.0 = not meaningfully downward
+    # Around 1.0 = strongly downward
+    #
     downward_severity = (
         pitch - 0.60
     ) / 0.35
@@ -168,13 +184,16 @@ def extract_frame_features(detection):
         )
     )
 
+    # ========================================================
+    # FORWARD / AWAY
+    # ========================================================
+
     roughly_forward = (
         abs(yaw) <= 0.32
         and
         0.32 <= pitch <= 0.72
     )
 
-    # "Away" is deliberately broader than only left/right.
     away = (
         abs(yaw) > 0.32
         or
@@ -184,59 +203,39 @@ def extract_frame_features(detection):
     )
 
     # ========================================================
-    # ORIENTATION LABEL
+    # CURRENT HEAD ORIENTATION
     # ========================================================
 
     if yaw < -0.32:
-
         orientation = "Right"
 
     elif yaw > 0.32:
-
         orientation = "Left"
 
     elif pitch > 0.72:
-
         orientation = "Down"
 
     elif pitch < 0.32:
-
         orientation = "Up"
 
     else:
-
         orientation = "Forward"
 
+    # ========================================================
+    # RETURN CURRENT FRAME FEATURES
+    # ========================================================
+
     return {
-        "yaw":
-            yaw,
-
-        "pitch":
-            pitch,
-
-        "roll":
-            roll,
-
-        "confidence":
-            confidence,
-
-        "eye_distance_ratio":
-            eye_distance_ratio,
-
-        "looking_down":
-            looking_down,
-
-        "downward_severity":
-            downward_severity,
-
-        "roughly_forward":
-            roughly_forward,
-
-        "away":
-            away,
-
-        "orientation":
-            orientation
+        "yaw": yaw,
+        "pitch": pitch,
+        "roll": roll,
+        "confidence": confidence,
+        "eye_distance_ratio": eye_distance_ratio,
+        "looking_down": looking_down,
+        "downward_severity": downward_severity,
+        "roughly_forward": roughly_forward,
+        "away": away,
+        "orientation": orientation
     }
 
 
@@ -246,47 +245,45 @@ def extract_frame_features(detection):
 
 class TemporalFeatureWindow:
     """
-    Stores several seconds of behaviour and converts those
-    frames into one temporal ML sample.
+    Stores the most recent 10 seconds of behaviour.
+
+    The Random Forest does not classify an individual frame.
+
+    Instead, it receives a summary of behaviour observed across
+    the temporal window.
     """
 
     def __init__(
         self,
-        window_seconds=3.0
+        window_seconds=10.0
     ):
-
-        self.window_seconds = (
+        self.window_seconds = float(
             window_seconds
         )
 
         self.samples = deque()
 
     # --------------------------------------------------------
-    # RESET WINDOW
+    # CLEAR ALL HISTORY
     # --------------------------------------------------------
 
     def clear(self):
-
         self.samples.clear()
 
     # --------------------------------------------------------
-    # ADD CURRENT FRAME
+    # ADD ONE FRAME
     # --------------------------------------------------------
 
     def add(
         self,
         features
     ):
-
         now = time.monotonic()
 
         self.samples.append(
             {
-                "time":
-                    now,
-
-                "features":
-                    features
+                "time": now,
+                "features": features
             }
         )
 
@@ -295,14 +292,13 @@ class TemporalFeatureWindow:
         )
 
     # --------------------------------------------------------
-    # REMOVE OLD FRAMES
+    # REMOVE FRAMES OLDER THAN WINDOW
     # --------------------------------------------------------
 
     def _remove_old(
         self,
         now
     ):
-
         cutoff = (
             now
             - self.window_seconds
@@ -311,56 +307,64 @@ class TemporalFeatureWindow:
         while (
             self.samples
             and
-            self.samples[0]["time"]
-            < cutoff
+            self.samples[0]["time"] < cutoff
         ):
-
             self.samples.popleft()
 
     # --------------------------------------------------------
-    # IS WINDOW READY?
+    # CURRENT WINDOW DURATION
     # --------------------------------------------------------
 
-    def ready(self):
+    def duration(self):
+        if len(self.samples) < 2:
+            return 0.0
 
-        if len(self.samples) < 10:
-
-            return False
-
-        duration = (
+        return (
             self.samples[-1]["time"]
             -
             self.samples[0]["time"]
         )
 
+    # --------------------------------------------------------
+    # IS THE WINDOW READY?
+    # --------------------------------------------------------
+
+    def ready(self):
+        """
+        Require approximately the complete temporal window
+        before making a prediction.
+        """
+
+        if len(self.samples) < 10:
+            return False
+
+        duration = self.duration()
+
         return (
             duration
-            >= self.window_seconds
-            * 0.80
+            >= self.window_seconds * 0.98
         )
 
     # --------------------------------------------------------
-    # TEMPORAL SUMMARY
+    # CREATE TEMPORAL SUMMARY
     # --------------------------------------------------------
 
     def summarize(self):
-
         if not self.samples:
-
             return None
 
         total_samples = len(
             self.samples
         )
 
+        # ----------------------------------------------------
+        # ONLY FRAMES WHERE A FACE WAS DETECTED
+        # ----------------------------------------------------
+
         visible = [
             sample["features"]
-
-            for sample
-            in self.samples
-
-            if sample["features"]
-            is not None
+            for sample in self.samples
+            if sample["features"] is not None
         ]
 
         visible_count = len(
@@ -373,11 +377,10 @@ class TemporalFeatureWindow:
         )
 
         # ====================================================
-        # NO VISIBLE FACE
-        # ========================================================
+        # NO FACE VISIBLE
+        # ====================================================
 
         if visible_count == 0:
-
             return {
                 "mean_yaw": 0.0,
                 "std_yaw": 0.0,
@@ -393,11 +396,9 @@ class TemporalFeatureWindow:
                 "looking_down_ratio": 0.0,
 
                 "mean_downward_severity": 0.0,
-
                 "max_downward_severity": 0.0,
 
                 "forward_ratio": 0.0,
-
                 "away_ratio": 0.0,
 
                 "face_visible_ratio":
@@ -411,8 +412,8 @@ class TemporalFeatureWindow:
             }
 
         # ====================================================
-        # ARRAYS
-        # ========================================================
+        # NUMERICAL FEATURE ARRAYS
+        # ====================================================
 
         yaw_values = np.array(
             [
@@ -440,9 +441,7 @@ class TemporalFeatureWindow:
 
         downward_values = np.array(
             [
-                item[
-                    "downward_severity"
-                ]
+                item["downward_severity"]
                 for item in visible
             ],
             dtype=float
@@ -457,45 +456,56 @@ class TemporalFeatureWindow:
         )
 
         # ====================================================
-        # RATIOS
-        # ========================================================
+        # LOOKING-DOWN RATIO
+        # ====================================================
+
+        looking_down_count = sum(
+            1
+            for item in visible
+            if item["looking_down"]
+        )
 
         looking_down_ratio = (
-            sum(
-                1
-                for item in visible
-                if item[
-                    "looking_down"
-                ]
-            )
-            / visible_count
-        )
-
-        forward_ratio = (
-            sum(
-                1
-                for item in visible
-                if item[
-                    "roughly_forward"
-                ]
-            )
-            / visible_count
-        )
-
-        away_ratio = (
-            sum(
-                1
-                for item in visible
-                if item[
-                    "away"
-                ]
-            )
+            looking_down_count
             / visible_count
         )
 
         # ====================================================
-        # MOVEMENT + ORIENTATION CHANGES
-        # ========================================================
+        # FORWARD RATIO
+        # ====================================================
+
+        forward_count = sum(
+            1
+            for item in visible
+            if item["roughly_forward"]
+        )
+
+        forward_ratio = (
+            forward_count
+            / visible_count
+        )
+
+        # ====================================================
+        # AWAY RATIO
+        # ====================================================
+
+        away_count = sum(
+            1
+            for item in visible
+            if item["away"]
+        )
+
+        away_ratio = (
+            away_count
+            / visible_count
+        )
+
+        # ====================================================
+        # HEAD MOVEMENT
+        #
+        # Average change in yaw + pitch between consecutive
+        # visible frames.
+        # ====================================================
 
         movements = []
 
@@ -504,22 +514,23 @@ class TemporalFeatureWindow:
         previous = None
 
         for current in visible:
-
             if previous is not None:
-
                 yaw_change = abs(
                     current["yaw"]
-                    - previous["yaw"]
+                    -
+                    previous["yaw"]
                 )
 
                 pitch_change = abs(
                     current["pitch"]
-                    - previous["pitch"]
+                    -
+                    previous["pitch"]
                 )
 
                 movements.append(
                     yaw_change
-                    + pitch_change
+                    +
+                    pitch_change
                 )
 
                 if (
@@ -527,13 +538,11 @@ class TemporalFeatureWindow:
                     !=
                     previous["orientation"]
                 ):
-
                     orientation_changes += 1
 
             previous = current
 
         if movements:
-
             head_movement = float(
                 np.mean(
                     movements
@@ -541,22 +550,22 @@ class TemporalFeatureWindow:
             )
 
         else:
-
             head_movement = 0.0
 
-        possible_changes = max(
+        possible_orientation_changes = max(
             1,
             visible_count - 1
         )
 
         orientation_change_rate = (
             orientation_changes
-            / possible_changes
+            /
+            possible_orientation_changes
         )
 
         # ====================================================
-        # RETURN TEMPORAL FEATURES
-        # ========================================================
+        # RETURN 10-SECOND BEHAVIOURAL SUMMARY
+        # ====================================================
 
         return {
             "mean_yaw":
@@ -667,8 +676,11 @@ class TemporalFeatureWindow:
                     orientation_change_rate
                 ),
 
-            # Keep for analysis only.
-            # We may NOT use this for training later.
+            # Detector confidence is kept in the CSV
+            # for analysis only.
+            #
+            # It is NOT included as an input feature
+            # when training the Random Forest.
             "mean_confidence":
                 float(
                     np.mean(

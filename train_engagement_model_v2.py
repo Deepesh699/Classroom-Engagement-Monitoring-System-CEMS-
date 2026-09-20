@@ -4,7 +4,9 @@ import sys
 import joblib
 import pandas as pd
 
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier
+)
 
 from sklearn.metrics import (
     accuracy_score,
@@ -34,15 +36,18 @@ MODEL_PATH = (
 
 RANDOM_STATE = 42
 
+WINDOW_SECONDS = 10.0
+
 
 # ============================================================
-# FEATURES
+# RANDOM FOREST INPUT FEATURES
 #
 # IMPORTANT:
-# mean_confidence is intentionally NOT included.
 #
-# We want the model to learn behavioural signals,
-# not simply detector confidence.
+# YuNet detector confidence is deliberately NOT included.
+#
+# We want the model to learn behavioural patterns rather than
+# simply learning camera/detector quality.
 # ============================================================
 
 FEATURE_COLUMNS = [
@@ -76,10 +81,6 @@ FEATURE_COLUMNS = [
 TARGET_COLUMN = "label"
 
 
-# ============================================================
-# EXPECTED LABELS
-# ============================================================
-
 EXPECTED_LABELS = [
     "Engaged",
     "Neutral",
@@ -94,18 +95,10 @@ EXPECTED_LABELS = [
 def main():
 
     print()
-    print(
-        "======================================"
-    )
-
-    print(
-        " CEMS ENGAGEMENT MODEL V2 TRAINING"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" CEMS ENGAGEMENT MODEL V2")
+    print(" 10-SECOND RANDOM FOREST")
+    print("==========================================")
     print()
 
     # --------------------------------------------------------
@@ -115,7 +108,6 @@ def main():
     if not os.path.exists(
         DATA_PATH
     ):
-
         print(
             f"ERROR: Dataset not found: "
             f"{DATA_PATH}"
@@ -124,7 +116,7 @@ def main():
         sys.exit(1)
 
     # --------------------------------------------------------
-    # LOAD DATA
+    # LOAD DATASET
     # --------------------------------------------------------
 
     data = pd.read_csv(
@@ -132,7 +124,7 @@ def main():
     )
 
     print(
-        f"Dataset loaded: {DATA_PATH}"
+        f"Dataset: {DATA_PATH}"
     )
 
     print(
@@ -142,31 +134,27 @@ def main():
     print()
 
     # --------------------------------------------------------
-    # CHECK REQUIRED COLUMNS
+    # REQUIRED COLUMNS
     # --------------------------------------------------------
 
     required_columns = (
         FEATURE_COLUMNS
-        + [TARGET_COLUMN]
+        +
+        [TARGET_COLUMN]
     )
 
     missing_columns = [
         column
         for column in required_columns
-
-        if column
-        not in data.columns
+        if column not in data.columns
     ]
 
     if missing_columns:
-
         print(
-            "ERROR: Dataset is missing "
-            "required columns:"
+            "ERROR: Dataset is missing columns:"
         )
 
         for column in missing_columns:
-
             print(
                 f" - {column}"
             )
@@ -174,11 +162,12 @@ def main():
         sys.exit(1)
 
     # --------------------------------------------------------
-    # DROP INVALID ROWS
+    # REMOVE INVALID ROWS
     # --------------------------------------------------------
 
     data = data.dropna(
-        subset=required_columns
+        subset=
+        required_columns
     )
 
     print(
@@ -188,7 +177,7 @@ def main():
     print()
 
     # --------------------------------------------------------
-    # CLASS DISTRIBUTION
+    # CLASS COUNTS
     # --------------------------------------------------------
 
     class_counts = (
@@ -211,44 +200,10 @@ def main():
     print()
 
     # --------------------------------------------------------
-    # CHECK CLASSES
+    # VALIDATE CLASSES
     # --------------------------------------------------------
 
-    existing_labels = set(
-        data[
-            TARGET_COLUMN
-        ].unique()
-    )
-
-    missing_labels = [
-        label
-        for label in EXPECTED_LABELS
-
-        if label
-        not in existing_labels
-    ]
-
-    if missing_labels:
-
-        print(
-            "WARNING:"
-        )
-
-        print(
-            "The following expected classes "
-            "are missing:"
-        )
-
-        for label in missing_labels:
-
-            print(
-                f" - {label}"
-            )
-
-        print()
-
-    if len(existing_labels) < 2:
-
+    if len(class_counts) < 2:
         print(
             "ERROR: At least two classes "
             "are required."
@@ -256,8 +211,24 @@ def main():
 
         sys.exit(1)
 
+    smallest_class = int(
+        class_counts.min()
+    )
+
+    if smallest_class < 4:
+        print(
+            "ERROR:"
+        )
+
+        print(
+            "Each class needs more samples "
+            "before train/test splitting."
+        )
+
+        sys.exit(1)
+
     # ========================================================
-    # INPUT AND TARGET
+    # MODEL INPUT AND TARGET
     # ========================================================
 
     X = data[
@@ -276,12 +247,9 @@ def main():
         train_test_split(
             X,
             y,
-
             test_size=0.25,
-
             random_state=
             RANDOM_STATE,
-
             stratify=y
         )
     )
@@ -299,29 +267,23 @@ def main():
     print()
 
     # ========================================================
-    # RANDOM FOREST V2
+    # RANDOM FOREST MODEL
     # ========================================================
 
-    model = RandomForestClassifier(
-
-        n_estimators=500,
-
-        max_depth=None,
-
-        min_samples_split=4,
-
-        min_samples_leaf=2,
-
-        class_weight="balanced",
-
-        random_state=
-        RANDOM_STATE,
-
-        n_jobs=-1
+    model = (
+        RandomForestClassifier(
+            n_estimators=500,
+            max_depth=None,
+            min_samples_split=4,
+            min_samples_leaf=2,
+            class_weight="balanced",
+            random_state=RANDOM_STATE,
+            n_jobs=-1
+        )
     )
 
     print(
-        "Training Random Forest V2..."
+        "Training Random Forest..."
     )
 
     model.fit(
@@ -336,20 +298,24 @@ def main():
     print()
 
     # ========================================================
-    # PREDICTIONS
+    # TEST PREDICTIONS
     # ========================================================
 
-    predictions = model.predict(
-        X_test
+    predictions = (
+        model.predict(
+            X_test
+        )
     )
 
     # ========================================================
     # METRICS
     # ========================================================
 
-    accuracy = accuracy_score(
-        y_test,
-        predictions
+    accuracy = (
+        accuracy_score(
+            y_test,
+            predictions
+        )
     )
 
     balanced_accuracy = (
@@ -359,40 +325,31 @@ def main():
         )
     )
 
-    macro_f1 = f1_score(
-        y_test,
-        predictions,
-
-        average="macro",
-
-        zero_division=0
+    macro_f1 = (
+        f1_score(
+            y_test,
+            predictions,
+            average="macro",
+            zero_division=0
+        )
     )
 
-    weighted_f1 = f1_score(
-        y_test,
-        predictions,
-
-        average="weighted",
-
-        zero_division=0
+    weighted_f1 = (
+        f1_score(
+            y_test,
+            predictions,
+            average="weighted",
+            zero_division=0
+        )
     )
 
     # ========================================================
-    # RESULTS
+    # PRINT RESULTS
     # ========================================================
 
-    print(
-        "======================================"
-    )
-
-    print(
-        " PRELIMINARY V2 RESULTS"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" PRELIMINARY 10-SECOND RESULTS")
+    print("==========================================")
     print()
 
     print(
@@ -417,9 +374,9 @@ def main():
 
     print()
 
-    # --------------------------------------------------------
+    # ========================================================
     # CLASSIFICATION REPORT
-    # --------------------------------------------------------
+    # ========================================================
 
     print(
         "Classification Report:"
@@ -431,10 +388,8 @@ def main():
         classification_report(
             y_test,
             predictions,
-
             labels=
             EXPECTED_LABELS,
-
             zero_division=0
         )
     )
@@ -443,40 +398,30 @@ def main():
     # CONFUSION MATRIX
     # ========================================================
 
-    matrix = confusion_matrix(
-        y_test,
-        predictions,
-
-        labels=
-        EXPECTED_LABELS
+    matrix = (
+        confusion_matrix(
+            y_test,
+            predictions,
+            labels=
+            EXPECTED_LABELS
+        )
     )
 
     matrix_df = pd.DataFrame(
         matrix,
-
         index=[
             f"Actual {label}"
             for label in EXPECTED_LABELS
         ],
-
         columns=[
             f"Pred {label}"
             for label in EXPECTED_LABELS
         ]
     )
 
-    print(
-        "======================================"
-    )
-
-    print(
-        " CONFUSION MATRIX"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" CONFUSION MATRIX")
+    print("==========================================")
     print()
 
     print(
@@ -489,16 +434,14 @@ def main():
     # FEATURE IMPORTANCE
     # ========================================================
 
-    feature_importance = (
-        pd.DataFrame(
-            {
-                "feature":
-                    FEATURE_COLUMNS,
+    feature_importance = pd.DataFrame(
+        {
+            "feature":
+                FEATURE_COLUMNS,
 
-                "importance":
-                    model.feature_importances_
-            }
-        )
+            "importance":
+                model.feature_importances_
+        }
     )
 
     feature_importance = (
@@ -508,18 +451,9 @@ def main():
         )
     )
 
-    print(
-        "======================================"
-    )
-
-    print(
-        " FEATURE IMPORTANCE"
-    )
-
-    print(
-        "======================================"
-    )
-
+    print("==========================================")
+    print(" FEATURE IMPORTANCE")
+    print("==========================================")
     print()
 
     print(
@@ -531,11 +465,10 @@ def main():
     print()
 
     # ========================================================
-    # SAVE MODEL
+    # SAVE MODEL BUNDLE
     # ========================================================
 
     model_bundle = {
-
         "model":
             model,
 
@@ -548,10 +481,10 @@ def main():
             ),
 
         "window_seconds":
-            3.0,
+            WINDOW_SECONDS,
 
         "version":
-            2,
+            "v2-10-second",
 
         "uses_detector_confidence":
             False
@@ -562,85 +495,49 @@ def main():
         MODEL_PATH
     )
 
+    print("==========================================")
+    print(" MODEL SAVED")
+    print("==========================================")
+    print()
+
     print(
-        "======================================"
+        f"Model: {MODEL_PATH}"
     )
 
     print(
-        " MODEL SAVED"
-    )
-
-    print(
-        "======================================"
+        f"Temporal window: "
+        f"{WINDOW_SECONDS:.0f} seconds"
     )
 
     print()
 
     print(
-        f"Saved model: "
-        f"{MODEL_PATH}"
+        "Detector confidence is NOT used "
+        "as a Random Forest input feature."
     )
 
     print()
 
     print(
-        "Model uses behavioural "
-        "features only."
+        "IMPORTANT:"
     )
 
     print(
-        "YuNet mean confidence was "
-        "excluded from training."
+        "These evaluation results are preliminary."
+    )
+
+    print(
+        "Final evaluation should use completely "
+        "separate recording sessions or unseen "
+        "participants."
     )
 
     print()
 
-    # ========================================================
-    # IMPORTANT EVALUATION WARNING
-    # ========================================================
 
-    print(
-        "======================================"
-    )
-
-    print(
-        " EVALUATION NOTE"
-    )
-
-    print(
-        "======================================"
-    )
-
-    print()
-
-    print(
-        "These results are still "
-        "PRELIMINARY."
-    )
-
-    print()
-
-    print(
-        "The dataset contains overlapping "
-        "3-second windows."
-    )
-
-    print(
-        "Therefore similar samples may "
-        "appear in both training and testing."
-    )
-
-    print()
-
-    print(
-        "Final evaluation should use "
-        "completely separate recording "
-        "sessions or participants."
-    )
-
-    print()
-
+# ============================================================
+# RUN
+# ============================================================
 
 if __name__ == "__main__":
-
     main()
