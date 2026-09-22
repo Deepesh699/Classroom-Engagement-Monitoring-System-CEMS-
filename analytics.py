@@ -1,3 +1,4 @@
+from datetime import datetime
 from database import get_all_records
 
 # Index positions returned by database.get_all_records()
@@ -19,6 +20,17 @@ def calculate_average(records):
     scores = [float(record[ENGAGEMENT_SCORE]) for record in records]
 
     return round(sum(scores) / len(scores), 2)
+
+
+def parse_timestamp(timestamp):
+    """Convert a database timestamp into a datetime object."""
+    if isinstance(timestamp, datetime):
+        return timestamp
+
+    try:
+        return datetime.fromisoformat(str(timestamp))
+    except (ValueError, TypeError):
+        return None
 
 
 def get_student_average(registered_student_id):
@@ -49,6 +61,57 @@ def get_session_average(session_id):
     ]
 
     return calculate_average(session_records)
+
+
+def get_daily_engagement_averages():
+    """Return average engagement grouped by calendar date."""
+    records = get_all_records()
+
+    daily_records = {}
+
+    for record in records:
+        timestamp = parse_timestamp(record[TIMESTAMP])
+
+        if timestamp is None:
+            continue
+
+        date_key = timestamp.date().isoformat()
+
+        if date_key not in daily_records:
+            daily_records[date_key] = []
+
+        daily_records[date_key].append(record)
+
+    return {
+        date_key: calculate_average(records_for_day)
+        for date_key, records_for_day in sorted(daily_records.items())
+    }
+
+
+def get_weekly_engagement_averages():
+    """Return average engagement grouped by ISO calendar week."""
+    records = get_all_records()
+
+    weekly_records = {}
+
+    for record in records:
+        timestamp = parse_timestamp(record[TIMESTAMP])
+
+        if timestamp is None:
+            continue
+
+        iso_year, iso_week, _ = timestamp.isocalendar()
+        week_key = f"{iso_year}-W{iso_week:02d}"
+
+        if week_key not in weekly_records:
+            weekly_records[week_key] = []
+
+        weekly_records[week_key].append(record)
+
+    return {
+        week_key: calculate_average(records_for_week)
+        for week_key, records_for_week in sorted(weekly_records.items())
+    }
 
 
 def get_low_engagement_count(
@@ -184,7 +247,9 @@ def get_analytics():
         "total_records": len(records),
         "low_engagement_count": get_low_engagement_count(),
         "student_comparison": get_student_comparison(),
-        "session_comparison": get_session_comparison()
+        "session_comparison": get_session_comparison(),
+        "daily_averages": get_daily_engagement_averages(),
+        "weekly_averages": get_weekly_engagement_averages()
     }
 
 

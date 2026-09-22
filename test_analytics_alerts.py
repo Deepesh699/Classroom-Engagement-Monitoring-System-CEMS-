@@ -50,6 +50,18 @@ class TestAnalytics(unittest.TestCase):
 
         self.assertEqual(result[1], 62.5)
 
+    @patch("analytics.get_all_records", return_value=TEST_RECORDS)
+    def test_daily_engagement_averages(self, mock_records):
+        result = analytics.get_daily_engagement_averages()
+
+        self.assertEqual(result["2026-09-23"], 62.5)
+
+    @patch("analytics.get_all_records", return_value=TEST_RECORDS)
+    def test_weekly_engagement_averages(self, mock_records):
+        result = analytics.get_weekly_engagement_averages()
+
+        self.assertEqual(result["2026-W39"], 62.5)
+
     @patch("analytics.get_all_records", return_value=[])
     def test_empty_data(self, mock_records):
         result = analytics.get_analytics()
@@ -59,6 +71,8 @@ class TestAnalytics(unittest.TestCase):
         self.assertEqual(result["low_engagement_count"], 0)
         self.assertEqual(result["student_comparison"], {})
         self.assertEqual(result["session_comparison"], {})
+        self.assertEqual(result["daily_averages"], {})
+        self.assertEqual(result["weekly_averages"], {})
 
 
 class TestAlerts(unittest.TestCase):
