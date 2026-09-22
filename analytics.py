@@ -1,45 +1,193 @@
-from database import (
-    get_all_records,
-    get_average_engagement,
-    get_low_engagement_count
-)
+from database import get_all_records
+
+# Index positions returned by database.get_all_records()
+TIMESTAMP = 1
+ENGAGEMENT_SCORE = 3
+STATUS = 4
+REGISTERED_STUDENT_ID = 5
+SESSION_ID = 6
+ORIENTATION = 7
+
+LOW_THRESHOLD = 60
+
+
+def calculate_average(records):
+    """Calculate average engagement score."""
+    if not records:
+        return 0
+
+    scores = [float(record[ENGAGEMENT_SCORE]) for record in records]
+
+    return round(sum(scores) / len(scores), 2)
+
+
+def get_student_average(registered_student_id):
+    """
+    Return average engagement for an actual registered student.
+
+    Important:
+    Uses registered_student_id, NOT student_id.
+    student_id is only the temporary camera tracking ID.
+    """
+    records = get_all_records()
+
+    student_records = [
+        record for record in records
+        if record[REGISTERED_STUDENT_ID] == registered_student_id
+    ]
+
+    return calculate_average(student_records)
+
+
+def get_session_average(session_id):
+    """Return average engagement for one session."""
+    records = get_all_records()
+
+    session_records = [
+        record for record in records
+        if record[SESSION_ID] == session_id
+    ]
+
+    return calculate_average(session_records)
+
+
+def get_low_engagement_count(
+    registered_student_id=None,
+    session_id=None,
+    threshold=LOW_THRESHOLD
+):
+    """Count engagement records below the chosen threshold."""
+    records = get_all_records()
+
+    filtered_records = []
+
+    for record in records:
+
+        if (
+            registered_student_id is not None
+            and record[REGISTERED_STUDENT_ID] != registered_student_id
+        ):
+            continue
+
+        if (
+            session_id is not None
+            and record[SESSION_ID] != session_id
+        ):
+            continue
+
+        if float(record[ENGAGEMENT_SCORE]) < threshold:
+            filtered_records.append(record)
+
+    return len(filtered_records)
+
+
+def get_engagement_trend(
+    registered_student_id=None,
+    session_id=None
+):
+    """
+    Return engagement scores over time.
+
+    Can be filtered by registered student and/or session.
+    """
+    records = get_all_records()
+
+    trend = []
+
+    for record in records:
+
+        if (
+            registered_student_id is not None
+            and record[REGISTERED_STUDENT_ID] != registered_student_id
+        ):
+            continue
+
+        if (
+            session_id is not None
+            and record[SESSION_ID] != session_id
+        ):
+            continue
+
+        trend.append({
+            "timestamp": record[TIMESTAMP],
+            "engagement_score": record[ENGAGEMENT_SCORE],
+            "status": record[STATUS],
+            "orientation": record[ORIENTATION]
+        })
+
+    # database.py returns newest records first.
+    # Reverse so trend is oldest -> newest.
+    trend.reverse()
+
+    return trend
+
+
+def get_session_comparison():
+    """Return average engagement for each session."""
+    records = get_all_records()
+
+    session_ids = sorted({
+        record[SESSION_ID]
+        for record in records
+        if record[SESSION_ID] is not None
+    })
+
+    comparison = {}
+
+    for session_id in session_ids:
+
+        session_records = [
+            record for record in records
+            if record[SESSION_ID] == session_id
+        ]
+
+        comparison[session_id] = calculate_average(
+            session_records
+        )
+
+    return comparison
+
+
+def get_student_comparison():
+    """Return average engagement for each registered student."""
+    records = get_all_records()
+
+    student_ids = sorted({
+        record[REGISTERED_STUDENT_ID]
+        for record in records
+        if record[REGISTERED_STUDENT_ID] is not None
+    })
+
+    comparison = {}
+
+    for registered_student_id in student_ids:
+
+        student_records = [
+            record for record in records
+            if record[REGISTERED_STUDENT_ID]
+            == registered_student_id
+        ]
+
+        comparison[registered_student_id] = calculate_average(
+            student_records
+        )
+
+    return comparison
 
 
 def get_analytics():
-
+    """Return overall classroom analytics summary."""
     records = get_all_records()
 
     return {
-        "average_engagement":
-            get_average_engagement(),
-
-        "records":
-            len(records),
-
-        "low_engagement_records":
-            get_low_engagement_count(60)
+        "average_engagement": calculate_average(records),
+        "total_records": len(records),
+        "low_engagement_count": get_low_engagement_count(),
+        "student_comparison": get_student_comparison(),
+        "session_comparison": get_session_comparison()
     }
 
 
 if __name__ == "__main__":
-
-    analytics = get_analytics()
-
-    print("CEMS Analytics")
-    print("-------------------------")
-
-    print(
-        "Average Engagement:",
-        analytics["average_engagement"],
-        "%"
-    )
-
-    print(
-        "Total Records:",
-        analytics["records"]
-    )
-
-    print(
-        "Low Engagement Records:",
-        analytics["low_engagement_records"]
-    )
+    print("CEMS Engagement Analytics")
+    print(get_analytics())
