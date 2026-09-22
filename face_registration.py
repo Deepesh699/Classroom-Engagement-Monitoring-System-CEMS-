@@ -9,6 +9,7 @@ YUNET_MODEL_PATH = "face_detection_yunet_2023mar.onnx"
 
 
 def main():
+    # Get registered students from the database
     students = get_students()
 
     if not students:
@@ -19,9 +20,14 @@ def main():
     for student in students:
         print(student)
 
-    student_id = int(
-        input("\nEnter the database student ID to enrol: ")
-    )
+    # Ask which student to enrol
+    try:
+        student_id = int(
+            input("\nEnter the database student ID to enrol: ")
+        )
+    except ValueError:
+        print("Invalid student ID.")
+        return
 
     selected_student = None
 
@@ -42,6 +48,7 @@ def main():
         f"{student_name} ({student_number})"
     )
 
+    # Create YuNet face detector
     detector = cv2.FaceDetectorYN.create(
         YUNET_MODEL_PATH,
         "",
@@ -51,8 +58,10 @@ def main():
         5000
     )
 
+    # Create face recognition service
     recognizer = FaceRecognitionService()
 
+    # Open webcam
     camera = cv2.VideoCapture(0)
 
     if not camera.isOpened():
@@ -73,6 +82,7 @@ def main():
         success, frame = camera.read()
 
         if not success:
+            print("Could not read camera frame.")
             break
 
         height, width = frame.shape[:2]
@@ -108,6 +118,7 @@ def main():
                 2
             )
 
+        # Display number of captured samples
         cv2.putText(
             frame,
             f"Samples: {len(features)}",
@@ -118,6 +129,7 @@ def main():
             2
         )
 
+        # Display controls
         cv2.putText(
             frame,
             "SPACE=capture | S=save | Q=quit",
@@ -135,52 +147,77 @@ def main():
 
         key = cv2.waitKey(1) & 0xFF
 
+        # Capture face sample
         if key == ord(" "):
+
             if current_detection is None:
                 print("No face detected.")
                 continue
 
-            feature = recognizer.extract_feature(
-                frame,
-                current_detection
-            )
+            try:
+                feature = recognizer.extract_feature(
+                    frame,
+                    current_detection
+                )
 
-            features.append(
-                feature
-            )
+                features.append(feature)
+
+                print(
+                    f"Captured sample {len(features)}"
+                )
+
+            except Exception as error:
+                print(
+                    f"Error capturing face sample: {error}"
+                )
+
+        # Save face registration
+        elif key in (ord("s"), ord("S")):
 
             print(
-                f"Captured sample {len(features)}"
+                f"Save key detected. "
+                f"Samples captured: {len(features)}"
             )
 
-        elif key == ord("s"):
             if len(features) < 5:
                 print(
                     "Please capture at least 5 samples."
                 )
                 continue
 
-            average_feature = np.mean(
-                np.vstack(features),
-                axis=0,
-                keepdims=True
-            )
+            try:
+                print("Preparing face features...")
 
-            recognizer.register_student(
-                student_id=student_id,
-                student_number=student_number,
-                student_name=student_name,
-                feature=average_feature
-            )
+                average_feature = np.mean(
+                    np.vstack(features),
+                    axis=0,
+                    keepdims=True
+                )
 
-            print(
-                f"\nFace enrolled successfully for "
-                f"{student_name} ({student_number})"
-            )
+                print("Saving face registration...")
 
-            break
+                recognizer.register_student(
+                    student_id=student_id,
+                    student_number=student_number,
+                    student_name=student_name,
+                    feature=average_feature
+                )
 
-        elif key == ord("q"):
+                print(
+                    f"\nFace enrolled successfully for "
+                    f"{student_name} ({student_number})"
+                )
+
+                break
+
+            except Exception as error:
+                print(
+                    f"\nError saving face registration: {error}"
+                )
+
+        # Quit
+        elif key in (ord("q"), ord("Q")):
+            print("Face registration cancelled.")
             break
 
     camera.release()
