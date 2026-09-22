@@ -2,6 +2,7 @@ import cv2
 import joblib
 import math
 import os
+import time 
 
 from collections import Counter, deque
 
@@ -10,6 +11,14 @@ import pandas as pd
 from engagement_features import (
     extract_frame_features,
     TemporalFeatureWindow
+)
+from face_recognition_service import FaceRecognitionService
+from database import (
+    get_active_session_id,
+    get_student_by_id,
+    get_track_assignments,
+    assign_track_to_student,
+    save_live_results
 )
 
 
@@ -1676,6 +1685,76 @@ def main():
         return
 
     # ========================================================
+    # CEMS STUDENT IDENTITY + SESSION INTEGRATION
+    # ========================================================
+
+    session_id = get_active_session_id()
+
+    if session_id is None:
+
+        print()
+        print("ERROR: No active classroom session.")
+        print("Start a session before running CEMS.")
+        print()
+
+        return
+
+    print(
+        f"Active classroom session: {session_id}"
+    )
+
+    try:
+
+        face_recognition = (
+            FaceRecognitionService(
+                threshold=0.50
+            )
+        )
+
+    except Exception as error:
+
+        print()
+        print(
+            "ERROR loading SFace recognition:"
+        )
+        print(error)
+
+        return
+
+    if not face_recognition.registered_faces:
+
+        print()
+        print(
+            "ERROR: No enrolled student faces found."
+        )
+        print(
+            "Run face_registration.py first."
+        )
+
+        return
+
+    print(
+        "Registered face profiles:",
+        len(
+            face_recognition.registered_faces
+        )
+    )
+
+    # Stable recognised identity for each temporary track.
+    track_identity = {}
+
+    # Require several consecutive matching recognition frames
+    # before assigning a real student to a track.
+    recognition_history = {}
+
+    RECOGNITION_CONFIRM_FRAMES = 5
+
+    # Save engagement periodically rather than every frame.
+    SAVE_INTERVAL_SECONDS = 5
+
+    last_database_save = time.time()
+
+    # ========================================================
     # CAMERA SOURCE
     # ========================================================
 
@@ -1717,6 +1796,21 @@ def main():
             max_missing=45
         )
     )
+
+    # If this program is restarted while the same classroom
+    # session is still active, do not reuse old track IDs.
+    existing_assignments = get_track_assignments(
+        session_id
+    )
+
+    if existing_assignments:
+        tracker.next_student_id = (
+            max(
+                assignment[1]
+                for assignment in existing_assignments
+            )
+            + 1
+        )
 
     min_face_size = (
         source_info[
@@ -2103,6 +2197,148 @@ def main():
                 window_duration = 0.0
 
             # =================================================
+            # REGISTERED STUDENT IDENTITY
+            # =================================================
+
+            registered_student_id = (
+                track_identity.get(
+                    track_id
+                )
+            )
+
+            # -------------------------------------------------
+            # FACE RECOGNITION
+            # -------------------------------------------------
+
+            if (
+                detection is not None
+                and registered_student_id is None
+            ):
+
+                try:
+
+                    feature = (
+                        face_recognition.extract_feature(
+                            frame,
+                            detection
+                        )
+                    )
+
+                    recognition_result = (
+                        face_recognition.recognise(
+                            feature
+                        )
+                    )
+
+                    if recognition_result[
+                        "recognised"
+                    ]:
+
+                        recognised_id = (
+                            recognition_result[
+                                "student_id"
+                            ]
+                        )
+
+                        # One registered student can belong to only
+                        # one active track at a time. This prevents
+                        # two faces being labelled as the same person.
+                        already_assigned = (
+                            recognised_id
+                            in track_identity.values()
+                        )
+
+                        if already_assigned:
+
+                            if track_id in recognition_history:
+                                recognition_history[
+                                    track_id
+                                ].clear()
+
+                        else:
+
+                            if track_id not in recognition_history:
+
+                                recognition_history[
+                                    track_id
+                                ] = deque(
+                                    maxlen=(
+                                        RECOGNITION_CONFIRM_FRAMES
+                                    )
+                                )
+
+                            recognition_history[
+                                track_id
+                            ].append(
+                                recognised_id
+                            )
+
+                            history = list(
+                                recognition_history[
+                                    track_id
+                                ]
+                            )
+
+                            if (
+                                len(history)
+                                ==
+                                RECOGNITION_CONFIRM_FRAMES
+                                and
+                                len(set(history))
+                                == 1
+                            ):
+
+                                confirmed_student_id = (
+                                    history[0]
+                                )
+
+                                student_record = (
+                                    get_student_by_id(
+                                        confirmed_student_id
+                                    )
+                                )
+
+                                if student_record is not None:
+
+                                    registered_student_id = (
+                                        confirmed_student_id
+                                    )
+
+                                    track_identity[
+                                        track_id
+                                    ] = (
+                                        confirmed_student_id
+                                    )
+
+                                    assign_track_to_student(
+                                        session_id,
+                                        track_id,
+                                        confirmed_student_id
+                                    )
+
+                                    print(
+                                        f"Track {track_id} "
+                                        f"recognised as "
+                                        f"{student_record[2]} "
+                                        f"({student_record[1]})"
+                                    )
+
+                    else:
+
+                        if track_id in recognition_history:
+
+                            recognition_history[
+                                track_id
+                            ].clear()
+
+                except cv2.error as error:
+
+                    print(
+                        "Face recognition error:",
+                        error
+                    )
+
+            # =================================================
             # STABLE TEAM / DATABASE OUTPUT CONTRACT
             # =================================================
 
@@ -2119,6 +2355,14 @@ def main():
                 "orientation":
                     orientation
             }
+
+            if registered_student_id is not None:
+
+                student_result[
+                    "registered_student_id"
+                ] = (
+                    registered_student_id
+                )
 
             live_results.append(
                 student_result
@@ -2222,10 +2466,38 @@ def main():
             # STUDENT LABEL
             # =================================================
 
+            student_name = None
+            student_number = None
+
+            if registered_student_id is not None:
+
+                student_record = get_student_by_id(
+                    registered_student_id
+                )
+
+                if student_record is not None:
+
+                    student_number = student_record[1]
+                    student_name = student_record[2]
+
+            if student_name is not None:
+
+                identity_text = (
+                    f"{student_name} | "
+                    f"{student_number}"
+                )
+
+            else:
+
+                identity_text = (
+                    f"Unknown Student | "
+                    f"Track {track_id}"
+                )
+
             if ready:
 
                 label = (
-                    f"Student {track_id} | "
+                    f"{identity_text} | "
                     f"{orientation} | "
                     f"{status} | "
                     f"{score}% | "
@@ -2235,7 +2507,7 @@ def main():
             else:
 
                 label = (
-                    f"Student {track_id} | "
+                    f"{identity_text} | "
                     f"{orientation} | "
                     f"Collecting "
                     f"{window_duration:.1f}/"
@@ -2266,6 +2538,83 @@ def main():
         engagement_manager.cleanup(
             tracker.students
         )
+
+        # ====================================================
+        # CLEAN UP IDENTITY STATE FOR DELETED TRACKS
+        # ====================================================
+
+        active_track_ids = set(
+            tracker.students.keys()
+        )
+
+        for old_track_id in list(
+            track_identity.keys()
+        ):
+
+            if old_track_id not in active_track_ids:
+                del track_identity[
+                    old_track_id
+                ]
+
+        for old_track_id in list(
+            recognition_history.keys()
+        ):
+
+            if old_track_id not in active_track_ids:
+                del recognition_history[
+                    old_track_id
+                ]
+
+        # ====================================================
+        # SAVE REGISTERED STUDENT ENGAGEMENT TO SQLITE
+        # ====================================================
+
+        current_time = time.time()
+
+        if (
+            live_results
+            and
+            current_time - last_database_save >= SAVE_INTERVAL_SECONDS
+        ):
+
+            # Keep live_results unchanged for team integration,
+            # but only persist meaningful, recognised ML results.
+            database_results = [
+                result
+                for result in live_results
+                if (
+                    result.get(
+                        "registered_student_id"
+                    )
+                    is not None
+                    and
+                    result.get(
+                        "status"
+                    )
+                    not in (
+                        "Collecting",
+                        "Unknown"
+                    )
+                )
+            ]
+
+            saved_count = 0
+
+            if database_results:
+
+                saved_count = save_live_results(
+                    session_id,
+                    database_results
+                )
+
+            if saved_count > 0:
+                print(
+                    f"Saved {saved_count} "
+                    f"registered engagement record(s) "
+                    f"for session {session_id}"
+                )
+
+            last_database_save = current_time
 
         # ====================================================
         # SUMMARY PANEL
