@@ -2,12 +2,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 
-# --------------------------------------------------
-# CEMS - Main Launcher
-# --------------------------------------------------
+# ============================================================
+# CEMS - MAIN LAUNCHER
+# ============================================================
 
 st.set_page_config(
     page_title="CEMS",
@@ -18,41 +19,104 @@ st.set_page_config(
 BASE_DIR = Path(__file__).resolve().parent
 
 
-def launch_python_script(script_path):
-    """Launch an existing Python/OpenCV component."""
-    try:
-        subprocess.Popen(
-            [sys.executable, str(BASE_DIR / script_path)],
-            cwd=str(BASE_DIR)
-        )
-        st.success(f"Started {script_path}")
-    except Exception as error:
-        st.error(f"Could not start {script_path}: {error}")
+# ============================================================
+# SESSION STATE
+# ============================================================
 
+if "show_analytics" not in st.session_state:
+    st.session_state["show_analytics"] = False
+
+
+# ============================================================
+# LAUNCH NORMAL PYTHON / OPENCV PROGRAM
+# ============================================================
+
+def launch_python_script(script_path):
+    """
+    Launch Python/OpenCV components such as face registration
+    and live monitoring in a separate Windows console.
+    """
+
+    try:
+        full_path = BASE_DIR / script_path
+
+        if not full_path.exists():
+            st.error(f"Could not find {script_path}")
+            return
+
+        if sys.platform.startswith("win"):
+            subprocess.Popen(
+                [
+                    "cmd.exe",
+                    "/k",
+                    sys.executable,
+                    str(full_path)
+                ],
+                cwd=str(BASE_DIR)
+            )
+        else:
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    str(full_path)
+                ],
+                cwd=str(BASE_DIR)
+            )
+
+        st.success(
+            f"Started {script_path} in a new window."
+        )
+
+    except Exception as error:
+        st.error(
+            f"Could not start {script_path}: {error}"
+        )
+
+
+# ============================================================
+# LAUNCH STREAMLIT PAGE
+# ============================================================
 
 def launch_streamlit_page(script_path):
-    """Launch an existing Streamlit page."""
+    """
+    Launch another Streamlit component.
+    """
+
     try:
+        full_path = BASE_DIR / script_path
+
+        if not full_path.exists():
+            st.error(f"Could not find {script_path}")
+            return
+
         subprocess.Popen(
             [
                 sys.executable,
                 "-m",
                 "streamlit",
                 "run",
-                str(BASE_DIR / script_path)
+                str(full_path)
             ],
             cwd=str(BASE_DIR)
         )
-        st.success(f"Opened {script_path}")
+
+        st.success(
+            f"Opened {script_path}"
+        )
+
     except Exception as error:
-        st.error(f"Could not open {script_path}: {error}")
+        st.error(
+            f"Could not open {script_path}: {error}"
+        )
 
 
-# --------------------------------------------------
+# ============================================================
 # HEADER
-# --------------------------------------------------
+# ============================================================
 
-st.title("🎓 Classroom Engagement Monitoring System")
+st.title(
+    "🎓 Classroom Engagement Monitoring System"
+)
 
 st.write(
     "CEMS provides one place to manage classroom sessions, "
@@ -62,11 +126,13 @@ st.write(
 st.divider()
 
 
-# --------------------------------------------------
+# ============================================================
 # WORKFLOW
-# --------------------------------------------------
+# ============================================================
 
-st.subheader("Lecturer Workflow")
+st.subheader(
+    "Lecturer Workflow"
+)
 
 st.info(
     "1. Start or select a classroom session  →  "
@@ -78,19 +144,32 @@ st.info(
 st.divider()
 
 
-# --------------------------------------------------
+# ============================================================
 # MAIN MENU
-# --------------------------------------------------
+# ============================================================
 
-st.subheader("CEMS Home")
+st.subheader(
+    "CEMS Home"
+)
 
 col1, col2 = st.columns(2)
 
+
+# ============================================================
+# LEFT SIDE
+# ============================================================
+
 with col1:
 
-    st.markdown("### 📚 Session Management")
+    # SESSION MANAGEMENT
+
+    st.markdown(
+        "### 📚 Session Management"
+    )
+
     st.write(
-        "Start a new classroom session or review existing sessions."
+        "Start a new classroom session "
+        "or review existing sessions."
     )
 
     if st.button(
@@ -101,9 +180,16 @@ with col1:
             "dashboard/session_management.py"
         )
 
-    st.markdown("### 📷 Register Student Face")
+
+    # FACE REGISTRATION
+
+    st.markdown(
+        "### 📷 Register Student Face"
+    )
+
     st.write(
-        "Register a student's face for recognition during monitoring."
+        "Register a student's face "
+        "for recognition during monitoring."
     )
 
     if st.button(
@@ -114,9 +200,16 @@ with col1:
             "face_registration.py"
         )
 
-    st.markdown("### 🎥 Live Monitoring")
+
+    # LIVE MONITORING
+
+    st.markdown(
+        "### 🎥 Live Monitoring"
+    )
+
     st.write(
-        "Start classroom face recognition and engagement monitoring."
+        "Start classroom face recognition "
+        "and engagement monitoring."
     )
 
     if st.button(
@@ -128,11 +221,21 @@ with col1:
         )
 
 
+# ============================================================
+# RIGHT SIDE
+# ============================================================
+
 with col2:
 
-    st.markdown("### 📊 Dashboard")
+    # DASHBOARD
+
+    st.markdown(
+        "### 📊 Dashboard"
+    )
+
     st.write(
-        "View classroom engagement records and dashboard information."
+        "View classroom engagement records "
+        "and dashboard information."
     )
 
     if st.button(
@@ -143,9 +246,16 @@ with col2:
             "dashboard/dashboard.py"
         )
 
-    st.markdown("### 📈 Analytics")
+
+    # ANALYTICS
+
+    st.markdown(
+        "### 📈 Analytics"
+    )
+
     st.write(
-        "View student and session engagement analytics."
+        "View student engagement, "
+        "class averages and low-engagement alerts."
     )
 
     if st.button(
@@ -153,84 +263,312 @@ with col2:
         use_container_width=True
     ):
         st.session_state["show_analytics"] = True
+        st.rerun()
 
 
-# --------------------------------------------------
-# ANALYTICS SUMMARY
-# --------------------------------------------------
+# ============================================================
+# ANALYTICS
+# ============================================================
 
-if st.session_state.get("show_analytics", False):
+if st.session_state["show_analytics"]:
 
     st.divider()
 
-    st.header("📈 Engagement Analytics")
+    st.header(
+        "📈 Engagement Analytics"
+    )
+
+    st.caption(
+        "Simple overview of classroom engagement results."
+    )
 
     try:
+
         from analytics import get_analytics
         from alerts import get_students_requiring_attention
 
         analytics_data = get_analytics()
 
+
+        # ====================================================
+        # SUMMARY
+        # ====================================================
+
+        average = analytics_data[
+            "average_engagement"
+        ]
+
+        total_records = analytics_data[
+            "total_records"
+        ]
+
+        low_count = analytics_data[
+            "low_engagement_count"
+        ]
+
+
         metric1, metric2, metric3 = st.columns(3)
+
 
         metric1.metric(
             "Average Engagement",
-            f"{analytics_data['average_engagement']}%"
+            f"{average:.1f}%"
         )
 
         metric2.metric(
             "Total Records",
-            analytics_data["total_records"]
+            total_records
         )
 
         metric3.metric(
-            "Low Engagement Records",
-            analytics_data["low_engagement_count"]
+            "Low Engagement",
+            low_count
         )
 
-        st.subheader("Student Average Engagement")
+
+        # ====================================================
+        # SIMPLE OVERALL RESULT
+        # ====================================================
+
+        st.subheader(
+            "📊 Overall Engagement"
+        )
+
+        st.write(
+            "This shows the average engagement "
+            "across the selected classroom records."
+        )
+
+
+        overall_df = pd.DataFrame(
+            {
+                "Category": [
+                    "Average Engagement"
+                ],
+                "Engagement (%)": [
+                    average
+                ]
+            }
+        )
+
+        st.bar_chart(
+            overall_df,
+            x="Category",
+            y="Engagement (%)",
+            y_label="Engagement %"
+        )
+
+        st.info(
+            f"Overall classroom engagement: "
+            f"**{average:.1f}%**"
+        )
+
+
+        # ====================================================
+        # STUDENT ENGAGEMENT
+        # ====================================================
+
+        st.subheader(
+            "👥 Student Engagement"
+        )
+
+        st.write(
+            "This compares the average engagement "
+            "of each registered student."
+        )
+
 
         student_comparison = analytics_data[
             "student_comparison"
         ]
 
+
         if student_comparison:
-            st.bar_chart(student_comparison)
+
+            student_rows = []
+
+            for student_id, score in (
+                student_comparison.items()
+            ):
+
+                student_rows.append(
+                    {
+                        "Student": f"Student {student_id}",
+                        "Engagement (%)": score
+                    }
+                )
+
+
+            student_df = pd.DataFrame(
+                student_rows
+            )
+
+
+            st.bar_chart(
+                student_df,
+                x="Student",
+                y="Engagement (%)",
+                y_label="Engagement %"
+            )
+
+
+            st.write(
+                "**Student Results**"
+            )
+
+
+            for student_id, score in (
+                student_comparison.items()
+            ):
+
+                if score < 60:
+
+                    st.warning(
+                        f"⚠️ Student {student_id}: "
+                        f"{score:.1f}%"
+                    )
+
+                else:
+
+                    st.success(
+                        f"Student {student_id}: "
+                        f"{score:.1f}%"
+                    )
+
         else:
-            st.info("No registered student engagement data available.")
 
-        st.subheader("Session Average Engagement")
+            st.info(
+                "No registered student "
+                "engagement data available."
+            )
 
-        session_comparison = analytics_data[
-            "session_comparison"
-        ]
 
-        if session_comparison:
-            st.bar_chart(session_comparison)
-        else:
-            st.info("No session engagement data available.")
+        # ====================================================
+        # DAILY ANALYTICS
+        # ====================================================
 
-        st.subheader("Students Requiring Attention")
+        daily_averages = analytics_data.get(
+            "daily_averages",
+            {}
+        )
 
-        attention = get_students_requiring_attention()
+
+        if daily_averages:
+
+            st.subheader(
+                "📅 Daily Average"
+            )
+
+
+            daily_df = pd.DataFrame(
+                [
+                    {
+                        "Date": date,
+                        "Average Engagement (%)": score
+                    }
+                    for date, score
+                    in daily_averages.items()
+                ]
+            )
+
+
+            st.dataframe(
+                daily_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        # ====================================================
+        # WEEKLY ANALYTICS
+        # ====================================================
+
+        weekly_averages = analytics_data.get(
+            "weekly_averages",
+            {}
+        )
+
+
+        if weekly_averages:
+
+            st.subheader(
+                "📆 Weekly Average"
+            )
+
+
+            weekly_df = pd.DataFrame(
+                [
+                    {
+                        "Week": week,
+                        "Average Engagement (%)": score
+                    }
+                    for week, score
+                    in weekly_averages.items()
+                ]
+            )
+
+
+            st.dataframe(
+                weekly_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        # ====================================================
+        # LOW ENGAGEMENT ALERTS
+        # ====================================================
+
+        st.subheader(
+            "🚨 Students Requiring Attention"
+        )
+
+
+        attention = (
+            get_students_requiring_attention()
+        )
+
 
         if attention:
+
             for alert in attention:
-                st.warning(alert["message"])
+
+                st.warning(
+                    alert["message"]
+                )
+
         else:
+
             st.success(
                 "No sustained low-engagement alerts."
             )
 
-        if st.button("Close Analytics"):
-            st.session_state["show_analytics"] = False
+
+        # ====================================================
+        # CLOSE ANALYTICS
+        # ====================================================
+
+        if st.button(
+            "⬅️ Close Analytics"
+        ):
+
+            st.session_state[
+                "show_analytics"
+            ] = False
+
             st.rerun()
 
+
     except Exception as error:
+
         st.error(
             f"Could not load analytics: {error}"
         )
 
+
+# ============================================================
+# FOOTER
+# ============================================================
 
 st.divider()
 
