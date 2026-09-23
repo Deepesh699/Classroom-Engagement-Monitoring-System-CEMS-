@@ -1,11 +1,23 @@
 import os
+import sys
 import pandas as pd
 import streamlit as st
 
+# ============================================================
+# CONNECT DASHBOARD TO PROJECT ROOT
+# ============================================================
 
-# =========================================================
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+import database
+
+
+# ============================================================
 # PAGE CONFIGURATION
-# =========================================================
+# ============================================================
 
 st.set_page_config(
     page_title="CEMS Dashboard",
@@ -14,79 +26,125 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# LOAD DATA
-# =========================================================
+# ============================================================
+# LOAD DATA FROM SQLITE DATABASE
+# ============================================================
 
-@st.cache_data
 def load_data():
     """
-    Load engagement data from the existing CSV file.
-
-    This is temporary for development.
-    Later this function can be replaced with SQLite queries.
+    Load engagement records from the SQLite database.
     """
 
-    csv_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)),
-        "data",
-        "engagement.csv"
-    )
-
-    if not os.path.exists(csv_path):
-        return pd.DataFrame()
-
     try:
-        data = pd.read_csv(csv_path)
+        records = database.get_all_records()
 
-        required_columns = [
-            "student_id",
-            "engagement_score",
-            "status",
-            "timestamp"
-        ]
-
-        missing_columns = [
-            column
-            for column in required_columns
-            if column not in data.columns
-        ]
-
-        if missing_columns:
-            st.error(
-                f"Missing columns in engagement.csv: "
-                f"{missing_columns}"
-            )
+        if not records:
             return pd.DataFrame()
 
-        # Make sure engagement scores are numeric
+        # database.get_all_records() returns:
+        # id
+        # timestamp
+        # student_id
+        # engagement_score
+        # status
+        # registered_student_id
+        # session_id
+        # orientation
+
+        data = pd.DataFrame(
+            records,
+            columns=[
+                "id",
+                "timestamp",
+                "student_id",
+                "engagement_score",
+                "status",
+                "registered_student_id",
+                "session_id",
+                "orientation"
+            ]
+        )
+
+        data["timestamp"] = pd.to_datetime(
+            data["timestamp"],
+            errors="coerce"
+        )
+
         data["engagement_score"] = pd.to_numeric(
             data["engagement_score"],
             errors="coerce"
         )
 
-        # Remove invalid records
-        data = data.dropna(
-            subset=["engagement_score"]
-        )
-
         return data
 
-    except Exception as error:
-        st.error(
-            f"Unable to load engagement data: {error}"
-        )
+    except Exception as e:
+        st.error(f"Unable to load engagement data: {e}")
         return pd.DataFrame()
 
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def get_students_safe():
+    try:
+        return database.get_students()
+    except Exception:
+        return []
+
+
+def get_sessions_safe():
+    try:
+        return database.get_sessions()
+    except Exception:
+        return []
+
+
+def get_units_safe():
+    try:
+        return database.get_units()
+    except Exception:
+        return []
+
+
+def get_classrooms_safe():
+    try:
+        return database.get_classrooms()
+    except Exception:
+        return []
+
+
+def get_active_session_safe():
+    try:
+        return database.get_active_session_id()
+    except Exception:
+        return None
+
+
+def status_from_score(score):
+    if score >= 75:
+        return "Engaged"
+    elif score >= 50:
+        return "Moderate"
+    else:
+        return "Low"
+
+
+# ============================================================
+# LOAD DATABASE DATA
+# ============================================================
 
 data = load_data()
 
 
-# =========================================================
-# NAVIGATION
-# =========================================================
+# ============================================================
+# SIDEBAR
+# ============================================================
 
 st.sidebar.title("📊 CEMS")
+st.sidebar.caption("Classroom Engagement Monitoring System")
+
+st.sidebar.markdown("### Navigation")
 
 page = st.sidebar.radio(
     "Navigation",
@@ -97,1006 +155,568 @@ page = st.sidebar.radio(
         "Weekly Analytics",
         "Classroom Comparison",
         "Session History"
-    ]
+    ],
+    label_visibility="collapsed"
 )
 
+st.sidebar.divider()
 
-# =========================================================
+active_session = get_active_session_safe()
+
+if active_session is not None:
+    st.sidebar.success(f"Active Session: {active_session}")
+else:
+    st.sidebar.info("No active session")
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.title("📊 CEMS Dashboard")
+st.caption("Classroom Engagement Monitoring System")
+
+
+# ============================================================
 # OVERVIEW PAGE
-# =========================================================
+# ============================================================
 
 if page == "Overview":
 
-    st.title("📊 CEMS Dashboard")
-    st.caption(
-        "Classroom Engagement Monitoring System"
-    )
-
     st.header("Dashboard Overview")
-
-    # -----------------------------------------------------
-    # EMPTY DATA HANDLING
-    # -----------------------------------------------------
 
     if data.empty:
 
-        st.warning(
-            "No engagement data is currently available."
-        )
+        st.warning("No engagement data is currently available.")
 
         st.info(
             "The dashboard is ready, but there are no "
             "engagement records to display yet."
         )
 
-        st.stop()
+    else:
 
-    # -----------------------------------------------------
-    # CALCULATE METRICS
-    # -----------------------------------------------------
+        # ----------------------------
+        # KPIs
+        # ----------------------------
 
-    average_engagement = data[
-        "engagement_score"
-    ].mean()
+        total_records = len(data)
 
-    students_detected = data[
-        "student_id"
-    ].nunique()
+        average_engagement = data["engagement_score"].mean()
 
-    low_engagement = data[
-        data["engagement_score"] < 60
-    ]
-
-    low_engagement_students = low_engagement[
-        "student_id"
-    ].nunique()
-
-    # -----------------------------------------------------
-    # CURRENT SESSION INFORMATION
-    # -----------------------------------------------------
-
-    st.subheader("Current Session")
-
-    session_col1, session_col2, session_col3 = st.columns(3)
-
-    with session_col1:
-        st.metric(
-            "Unit",
-            "Not available yet"
+        engaged_count = len(
+            data[data["engagement_score"] >= 75]
         )
 
-    with session_col2:
-        st.metric(
-            "Classroom",
-            "Not available yet"
+        low_engagement_count = len(
+            data[data["engagement_score"] < 50]
         )
 
-    with session_col3:
-        st.metric(
-            "Session Status",
-            "Development"
+        col1, col2, col3, col4 = st.columns(4)
+
+        col1.metric(
+            "Total Records",
+            total_records
         )
 
-    st.divider()
-
-    # -----------------------------------------------------
-    # MAIN METRICS
-    # -----------------------------------------------------
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
+        col2.metric(
             "Average Engagement",
-            f"{average_engagement:.0f}%"
+            f"{average_engagement:.1f}%"
         )
 
-    with col2:
-        st.metric(
-            "Students",
-            students_detected
+        col3.metric(
+            "Engaged Records",
+            engaged_count
         )
 
-    with col3:
-        st.metric(
-            "Low Engagement Students",
-            low_engagement_students
+        col4.metric(
+            "Low Engagement",
+            low_engagement_count
         )
-
-    # -----------------------------------------------------
-    # ENGAGEMENT TREND
-    # -----------------------------------------------------
-
-    st.subheader("📈 Engagement Trend")
-
-    chart_data = data[
-        ["timestamp", "engagement_score"]
-    ].copy()
-
-    chart_data["timestamp"] = pd.to_datetime(
-        chart_data["timestamp"],
-        errors="coerce"
-    )
-
-    chart_data = chart_data.dropna(
-        subset=["timestamp"]
-    )
-
-    chart_data = chart_data.sort_values(
-        "timestamp"
-    )
-
-    if chart_data.empty:
-
-        st.info(
-            "There is not enough timestamp data "
-            "to display the engagement trend."
-        )
-
-    else:
-
-        chart_data = chart_data.set_index(
-            "timestamp"
-        )
-
-        st.line_chart(
-            chart_data["engagement_score"],
-            width="stretch"
-        )
-
-    # -----------------------------------------------------
-    # STUDENT SUMMARY
-    # -----------------------------------------------------
-
-    st.subheader("👨‍🎓 Student Engagement")
-
-    student_summary = (
-        data
-        .groupby("student_id")
-        .agg(
-            Average_Engagement=(
-                "engagement_score",
-                "mean"
-            ),
-            Records=(
-                "engagement_score",
-                "count"
-            )
-        )
-        .reset_index()
-    )
-
-    student_summary[
-        "Average_Engagement"
-    ] = student_summary[
-        "Average_Engagement"
-    ].round(1)
-
-    student_summary[
-        "Status"
-    ] = student_summary[
-        "Average_Engagement"
-    ].apply(
-        lambda score:
-            "Low"
-            if score < 60
-            else "Normal"
-    )
-
-    st.dataframe(
-        student_summary,
-        width="stretch",
-        hide_index=True
-    )
-
-    # -----------------------------------------------------
-    # LOW ENGAGEMENT ALERTS
-    # -----------------------------------------------------
-
-    st.subheader("🚨 Low Engagement Alerts")
-
-    if low_engagement.empty:
-
-        st.success(
-            "No low engagement students detected."
-        )
-
-    else:
-
-        for student_id in (
-            low_engagement["student_id"]
-            .unique()
-        ):
-
-            student_records = low_engagement[
-                low_engagement["student_id"]
-                == student_id
-            ]
-
-            average_score = student_records[
-                "engagement_score"
-            ].mean()
-
-            st.warning(
-                f"Student {student_id} — "
-                f"Average low engagement: "
-                f"{average_score:.0f}%"
-            )
-
-
-# =========================================================
-# PLACEHOLDER PAGES
-# =========================================================
-
-elif page == "Live Classroom":
-
-    st.title("🎥 Live Classroom")
-
-    st.caption(
-        "Latest available engagement activity for tracked students"
-    )
-
-    if data.empty:
-
-        st.warning(
-            "No engagement records are currently available."
-        )
-
-        st.info(
-            "Student tracking data will appear here "
-            "when engagement records are received."
-        )
-
-    else:
-
-        # Get the latest record for each student
-        live_data = data.copy()
-
-        live_data["timestamp"] = pd.to_datetime(
-            live_data["timestamp"],
-            errors="coerce"
-        )
-
-        live_data = live_data.dropna(
-            subset=["timestamp"]
-        )
-
-        live_data = live_data.sort_values(
-            "timestamp"
-        )
-
-        latest_students = (
-            live_data
-            .groupby("student_id")
-            .tail(1)
-            .reset_index(drop=True)
-        )
-
-        # ---------------------------------------------
-        # LIVE METRICS
-        # ---------------------------------------------
-
-        total_students = latest_students[
-            "student_id"
-        ].nunique()
-
-        average_engagement = latest_students[
-            "engagement_score"
-        ].mean()
-
-        low_students = latest_students[
-            latest_students["engagement_score"] < 60
-        ]
-
-        low_count = low_students[
-            "student_id"
-        ].nunique()
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric(
-                "Students Currently Tracked",
-                total_students
-            )
-
-        with col2:
-            st.metric(
-                "Current Average Engagement",
-                f"{average_engagement:.0f}%"
-            )
-
-        with col3:
-            st.metric(
-                "Low Engagement Students",
-                low_count
-            )
 
         st.divider()
 
-        # ---------------------------------------------
-        # CURRENT STUDENT ACTIVITY
-        # ---------------------------------------------
+        # ----------------------------
+        # ENGAGEMENT TREND
+        # ----------------------------
 
-        st.subheader("👨‍🎓 Current Student Activity")
+        st.subheader("Engagement Trend")
 
-        display_data = latest_students[
-            [
-                "student_id",
-                "engagement_score",
-                "status",
-                "timestamp"
-            ]
-        ].copy()
-
-        display_data = display_data.rename(
-            columns={
-                "student_id": "Student",
-                "engagement_score": "Engagement",
-                "status": "Status",
-                "timestamp": "Last Update"
-            }
+        trend_data = (
+            data.dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+            .set_index("timestamp")
         )
 
-        display_data["Engagement"] = (
-            display_data["Engagement"]
-            .round(0)
-            .astype(int)
-            .astype(str)
-            + "%"
+        if not trend_data.empty:
+            st.line_chart(
+                trend_data["engagement_score"]
+            )
+        else:
+            st.info("No valid timestamp data available.")
+
+        # ----------------------------
+        # STATUS DISTRIBUTION
+        # ----------------------------
+
+        st.subheader("Engagement Status")
+
+        status_counts = (
+            data["status"]
+            .fillna("Unknown")
+            .value_counts()
         )
 
-        display_data["Last Update"] = (
-            display_data["Last Update"]
-            .dt.strftime("%Y-%m-%d %H:%M:%S")
-        )
+        if not status_counts.empty:
+            st.bar_chart(status_counts)
+
+        # ----------------------------
+        # RECENT RECORDS
+        # ----------------------------
+
+        st.subheader("Recent Engagement Records")
+
+        display_columns = [
+            "timestamp",
+            "student_id",
+            "engagement_score",
+            "status",
+            "session_id",
+            "orientation"
+        ]
 
         st.dataframe(
-            display_data,
-            width="stretch",
+            data[display_columns]
+            .sort_values("timestamp", ascending=False),
+            use_container_width=True,
             hide_index=True
         )
 
-        # ---------------------------------------------
-        # LOW ENGAGEMENT ALERTS
-        # ---------------------------------------------
 
-        st.subheader("🚨 Low Engagement Alerts")
+# ============================================================
+# LIVE CLASSROOM PAGE
+# ============================================================
 
-        if low_students.empty:
+elif page == "Live Classroom":
 
-            st.success(
-                "No students are currently below "
-                "the 60% engagement threshold."
+    st.header("Live Classroom")
+
+    active_session = get_active_session_safe()
+
+    if active_session is None:
+
+        st.warning("There is currently no active classroom session.")
+
+    else:
+
+        st.success(
+            f"Session {active_session} is currently active."
+        )
+
+        if data.empty:
+
+            st.info(
+                "The session is active but no engagement "
+                "records have been recorded yet."
             )
 
         else:
 
-            for _, row in low_students.iterrows():
+            session_data = data[
+                data["session_id"] == active_session
+            ].copy()
 
-                st.warning(
-                    f"Student {row['student_id']} — "
-                    f"{row['engagement_score']:.0f}% engagement "
-                    f"({row['status']})"
+            if session_data.empty:
+
+                st.info(
+                    "No engagement records have been recorded "
+                    "for the active session."
                 )
 
-        # ---------------------------------------------
-        # LAST UPDATE
-        # ---------------------------------------------
+            else:
 
-        latest_timestamp = live_data[
-            "timestamp"
-        ].max()
+                avg_score = session_data[
+                    "engagement_score"
+                ].mean()
 
-        st.caption(
-            f"Latest data received: "
-            f"{latest_timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+                low_count = len(
+                    session_data[
+                        session_data["engagement_score"] < 50
+                    ]
+                )
+
+                unique_students = (
+                    session_data["student_id"]
+                    .nunique()
+                )
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric(
+                    "Average Engagement",
+                    f"{avg_score:.1f}%"
+                )
+
+                col2.metric(
+                    "Students Detected",
+                    unique_students
+                )
+
+                col3.metric(
+                    "Low Engagement",
+                    low_count
+                )
+
+                st.subheader("Live Engagement Records")
+
+                st.dataframe(
+                    session_data[
+                        [
+                            "timestamp",
+                            "student_id",
+                            "engagement_score",
+                            "status",
+                            "orientation"
+                        ]
+                    ].sort_values(
+                        "timestamp",
+                        ascending=False
+                    ),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                chart_data = (
+                    session_data
+                    .dropna(subset=["timestamp"])
+                    .sort_values("timestamp")
+                    .set_index("timestamp")
+                )
+
+                if not chart_data.empty:
+
+                    st.subheader("Live Engagement Trend")
+
+                    st.line_chart(
+                        chart_data["engagement_score"]
+                    )
+
+
+# ============================================================
+# STUDENT HISTORY PAGE
+# ============================================================
 
 elif page == "Student History":
 
-    st.title("👨‍🎓 Student History")
-
-    st.caption(
-        "Individual student engagement history and session activity"
-    )
-
-    # -----------------------------------------------------
-    # CHECK DATA
-    # -----------------------------------------------------
+    st.header("Student History")
 
     if data.empty:
 
-        st.warning(
-            "No student engagement data is currently available."
-        )
+        st.warning("No student engagement history is available.")
 
     else:
 
-        # -------------------------------------------------
-        # STUDENT SELECTION
-        # -------------------------------------------------
-
-        student_ids = sorted(
+        students = sorted(
             data["student_id"]
             .dropna()
+            .astype(str)
             .unique()
-            .tolist()
         )
 
         selected_student = st.selectbox(
             "Select Student",
-            student_ids
+            students
         )
-
-        # -------------------------------------------------
-        # FILTER SELECTED STUDENT
-        # -------------------------------------------------
 
         student_data = data[
-            data["student_id"] == selected_student
+            data["student_id"].astype(str)
+            == selected_student
         ].copy()
 
-        student_data["timestamp"] = pd.to_datetime(
-            student_data["timestamp"],
-            errors="coerce"
+        average_score = (
+            student_data["engagement_score"].mean()
         )
 
-        student_data = student_data.dropna(
-            subset=["timestamp"]
+        highest_score = (
+            student_data["engagement_score"].max()
         )
 
-        student_data = student_data.sort_values(
-            "timestamp"
+        lowest_score = (
+            student_data["engagement_score"].min()
         )
-
-        # -------------------------------------------------
-        # STUDENT METRICS
-        # -------------------------------------------------
-
-        average_engagement = student_data[
-            "engagement_score"
-        ].mean()
-
-        total_records = len(student_data)
-
-        low_records = student_data[
-            student_data["engagement_score"] < 60
-        ]
 
         col1, col2, col3 = st.columns(3)
 
-        with col1:
+        col1.metric(
+            "Average Engagement",
+            f"{average_score:.1f}%"
+        )
 
-            st.metric(
-                "Student",
-                str(selected_student)
+        col2.metric(
+            "Highest Score",
+            f"{highest_score:.0f}%"
+        )
+
+        col3.metric(
+            "Lowest Score",
+            f"{lowest_score:.0f}%"
+        )
+
+        st.subheader("Student Engagement Trend")
+
+        student_chart = (
+            student_data
+            .dropna(subset=["timestamp"])
+            .sort_values("timestamp")
+            .set_index("timestamp")
+        )
+
+        if not student_chart.empty:
+            st.line_chart(
+                student_chart["engagement_score"]
             )
 
-        with col2:
-
-            st.metric(
-                "Average Engagement",
-                f"{average_engagement:.0f}%"
-            )
-
-        with col3:
-
-            st.metric(
-                "Low Engagement Periods",
-                len(low_records)
-            )
-
-        st.divider()
-
-        # -------------------------------------------------
-        # ENGAGEMENT HISTORY CHART
-        # -------------------------------------------------
-
-        st.subheader("📈 Engagement Over Time")
-
-        chart_data = student_data[
-            [
-                "timestamp",
-                "engagement_score"
-            ]
-        ].copy()
-
-        chart_data = chart_data.set_index(
-            "timestamp"
-        )
-
-        st.line_chart(
-            chart_data["engagement_score"],
-            width="stretch"
-        )
-
-        # -------------------------------------------------
-        # ENGAGEMENT STATUS
-        # -------------------------------------------------
-
-        st.subheader("📊 Engagement Records")
-
-        display_data = student_data[
-            [
-                "timestamp",
-                "engagement_score",
-                "status"
-            ]
-        ].copy()
-
-        display_data = display_data.rename(
-            columns={
-                "timestamp": "Time",
-                "engagement_score": "Engagement",
-                "status": "Status"
-            }
-        )
-
-        display_data["Engagement"] = (
-            display_data["Engagement"]
-            .round(0)
-            .astype(int)
-            .astype(str)
-            + "%"
-        )
-
-        display_data["Time"] = (
-            pd.to_datetime(
-                display_data["Time"]
-            ).dt.strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )
-        )
+        st.subheader("Student Records")
 
         st.dataframe(
-            display_data,
-            width="stretch",
+            student_data[
+                [
+                    "timestamp",
+                    "student_id",
+                    "engagement_score",
+                    "status",
+                    "session_id",
+                    "orientation"
+                ]
+            ].sort_values(
+                "timestamp",
+                ascending=False
+            ),
+            use_container_width=True,
             hide_index=True
         )
 
-        # -------------------------------------------------
-        # LOW ENGAGEMENT PERIODS
-        # -------------------------------------------------
 
-        st.subheader("🚨 Low Engagement Periods")
-
-        if low_records.empty:
-
-            st.success(
-                "No low-engagement periods recorded "
-                "for this student."
-            )
-
-        else:
-
-            for _, row in low_records.iterrows():
-
-                st.warning(
-                    f"{row['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} — "
-                    f"{row['engagement_score']:.0f}% engagement "
-                    f"({row['status']})"
-                )
+# ============================================================
+# WEEKLY ANALYTICS PAGE
+# ============================================================
 
 elif page == "Weekly Analytics":
 
-    st.title("📈 Weekly Analytics")
-
-    st.caption(
-        "Weekly classroom engagement trends based on stored records"
-    )
-
-    # -----------------------------------------------------
-    # CHECK DATA
-    # -----------------------------------------------------
+    st.header("Weekly Analytics")
 
     if data.empty:
 
-        st.warning(
-            "No engagement data is currently available."
-        )
+        st.warning("No engagement data is available.")
 
     else:
 
-        weekly_data = data.copy()
-
-        # Convert timestamp to datetime
-        weekly_data["timestamp"] = pd.to_datetime(
-            weekly_data["timestamp"],
-            errors="coerce"
-        )
-
-        weekly_data = weekly_data.dropna(
+        weekly_data = data.dropna(
             subset=["timestamp"]
-        )
+        ).copy()
 
         if weekly_data.empty:
 
-            st.warning(
-                "No valid timestamp data is available "
-                "for weekly analytics."
-            )
+            st.info("No valid timestamp information is available.")
 
         else:
 
-            # -------------------------------------------------
-            # LAST 7 DAYS
-            # -------------------------------------------------
-
-            latest_date = weekly_data[
-                "timestamp"
-            ].max()
-
-            start_date = latest_date - pd.Timedelta(
-                days=6
-            )
-
-            weekly_data = weekly_data[
-                weekly_data["timestamp"] >= start_date
-            ].copy()
-
-            # -------------------------------------------------
-            # WEEKLY METRICS
-            # -------------------------------------------------
-
-            weekly_average = weekly_data[
-                "engagement_score"
-            ].mean()
-
-            total_records = len(
-                weekly_data
-            )
-
-            low_records = weekly_data[
-                weekly_data["engagement_score"] < 60
-            ]
-
-            low_students = low_records[
-                "student_id"
-            ].nunique()
-
-            col1, col2, col3 = st.columns(3)
-
-            with col1:
-
-                st.metric(
-                    "Weekly Average",
-                    f"{weekly_average:.0f}%"
-                )
-
-            with col2:
-
-                st.metric(
-                    "Engagement Records",
-                    total_records
-                )
-
-            with col3:
-
-                st.metric(
-                    "Low Engagement Students",
-                    low_students
-                )
-
-            st.divider()
-
-            # -------------------------------------------------
-            # DAILY AVERAGES
-            # -------------------------------------------------
-
-            weekly_data["Date"] = (
+            weekly_data["week"] = (
                 weekly_data["timestamp"]
-                .dt.date
+                .dt.to_period("W")
+                .astype(str)
             )
 
-            daily_average = (
+            weekly_summary = (
                 weekly_data
-                .groupby("Date")[
-                    "engagement_score"
-                ]
-                .mean()
+                .groupby("week")["engagement_score"]
+                .agg(
+                    Average="mean",
+                    Minimum="min",
+                    Maximum="max",
+                    Records="count"
+                )
                 .reset_index()
             )
 
-            daily_average[
-                "Average Engagement"
-            ] = daily_average[
-                "engagement_score"
-            ].round(1)
+            st.subheader("Average Engagement by Week")
 
-            # -------------------------------------------------
-            # WEEKLY ENGAGEMENT GRAPH
-            # -------------------------------------------------
-
-            st.subheader(
-                "📊 Engagement Trend"
-            )
-
-            chart_data = (
-                daily_average[
-                    [
-                        "Date",
-                        "Average Engagement"
-                    ]
-                ]
-                .set_index("Date")
+            weekly_chart = weekly_summary.set_index(
+                "week"
             )
 
             st.line_chart(
-                chart_data,
-                width="stretch"
+                weekly_chart["Average"]
             )
 
-            # -------------------------------------------------
-            # HIGHEST / LOWEST DAY
-            # -------------------------------------------------
-
-            if not daily_average.empty:
-
-                highest_row = daily_average.loc[
-                    daily_average[
-                        "Average Engagement"
-                    ].idxmax()
-                ]
-
-                lowest_row = daily_average.loc[
-                    daily_average[
-                        "Average Engagement"
-                    ].idxmin()
-                ]
-
-                col1, col2 = st.columns(2)
-
-                with col1:
-
-                    st.success(
-                        f"Highest Engagement: "
-                        f"{highest_row['Date']} — "
-                        f"{highest_row['Average Engagement']:.0f}%"
-                    )
-
-                with col2:
-
-                    st.warning(
-                        f"Lowest Engagement: "
-                        f"{lowest_row['Date']} — "
-                        f"{lowest_row['Average Engagement']:.0f}%"
-                    )
-
-            # -------------------------------------------------
-            # DAILY ANALYTICS TABLE
-            # -------------------------------------------------
-
-            st.subheader(
-                "📅 Daily Engagement Summary"
-            )
-
-            display_daily = daily_average[
-                [
-                    "Date",
-                    "Average Engagement"
-                ]
-            ].copy()
-
-            display_daily[
-                "Average Engagement"
-            ] = (
-                display_daily[
-                    "Average Engagement"
-                ]
-                .astype(str)
-                + "%"
-            )
+            st.subheader("Weekly Summary")
 
             st.dataframe(
-                display_daily,
-                width="stretch",
+                weekly_summary,
+                use_container_width=True,
                 hide_index=True
             )
 
+
+# ============================================================
+# CLASSROOM COMPARISON PAGE
+# ============================================================
+
 elif page == "Classroom Comparison":
 
-    st.title("🏫 Classroom Comparison")
+    st.header("Classroom Comparison")
 
-    st.caption(
-        "Compare engagement performance between classrooms"
-    )
+    sessions = get_sessions_safe()
+    classrooms = get_classrooms_safe()
 
-    # -----------------------------------------------------
-    # CHECK DATA
-    # -----------------------------------------------------
+    if not sessions:
 
-    if data.empty:
+        st.warning("No classroom sessions are available.")
 
-        st.warning(
-            "No engagement data is currently available."
-        )
-
-    elif "classroom" not in data.columns:
-
-        st.info(
-            "Classroom comparison is ready, but classroom "
-            "information is not available in the current data yet."
-        )
+    elif data.empty:
 
         st.warning(
-            "The current engagement data does not contain "
-            "a classroom field. Classroom comparison will "
-            "be displayed when classroom data is available "
-            "from the SQLite database."
-        )
-
-        st.subheader("Current Data Status")
-
-        col1, col2 = st.columns(2)
-
-        with col1:
-
-            st.metric(
-                "Engagement Records",
-                len(data)
-            )
-
-        with col2:
-
-            st.metric(
-                "Students",
-                data["student_id"].nunique()
-            )
-
-        st.caption(
-            "No classroom values have been invented. "
-            "This page is waiting for classroom data "
-            "from the final database."
+            "Sessions exist, but there is no engagement data "
+            "available for comparison."
         )
 
     else:
 
-        # -------------------------------------------------
-        # CLASSROOM ANALYTICS
-        # -------------------------------------------------
+        st.subheader("Engagement by Session")
 
-        classroom_data = data.copy()
-
-        classroom_data["engagement_score"] = pd.to_numeric(
-            classroom_data["engagement_score"],
-            errors="coerce"
+        comparison = (
+            data.groupby("session_id")["engagement_score"]
+            .agg(
+                Average="mean",
+                Minimum="min",
+                Maximum="max",
+                Records="count"
+            )
+            .reset_index()
         )
 
-        classroom_data = classroom_data.dropna(
-            subset=[
-                "classroom",
-                "engagement_score"
-            ]
+        comparison["Average"] = (
+            comparison["Average"].round(2)
         )
 
-        if classroom_data.empty:
+        st.bar_chart(
+            comparison.set_index("session_id")["Average"]
+        )
 
-            st.warning(
-                "No valid classroom engagement records "
-                "are available."
-            )
+        st.dataframe(
+            comparison,
+            use_container_width=True,
+            hide_index=True
+        )
 
-        else:
+        if classrooms:
 
-            # ---------------------------------------------
-            # CLASSROOM SUMMARY
-            # ---------------------------------------------
+            st.subheader("Registered Classrooms")
 
-            classroom_summary = (
-                classroom_data
-                .groupby("classroom")
-                .agg(
-                    Average_Engagement=(
-                        "engagement_score",
-                        "mean"
-                    ),
-                    Students=(
-                        "student_id",
-                        "nunique"
-                    ),
-                    Records=(
-                        "student_id",
-                        "count"
-                    )
-                )
-                .reset_index()
-            )
-
-            classroom_summary[
-                "Average_Engagement"
-            ] = classroom_summary[
-                "Average_Engagement"
-            ].round(1)
-
-            # ---------------------------------------------
-            # METRICS
-            # ---------------------------------------------
-
-            total_classrooms = classroom_summary[
-                "classroom"
-            ].nunique()
-
-            overall_average = classroom_data[
-                "engagement_score"
-            ].mean()
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-
-                st.metric(
-                    "Classrooms",
-                    total_classrooms
-                )
-
-            with col2:
-
-                st.metric(
-                    "Overall Average Engagement",
-                    f"{overall_average:.0f}%"
-                )
-
-            st.divider()
-
-            # ---------------------------------------------
-            # CLASSROOM COMPARISON CHART
-            # ---------------------------------------------
-
-            st.subheader(
-                "📊 Average Engagement by Classroom"
-            )
-
-            chart_data = (
-                classroom_summary[
-                    [
-                        "classroom",
-                        "Average_Engagement"
-                    ]
-                ]
-                .set_index("classroom")
-            )
-
-            st.bar_chart(
-                chart_data,
-                width="stretch"
-            )
-
-            # ---------------------------------------------
-            # CLASSROOM TABLE
-            # ---------------------------------------------
-
-            st.subheader(
-                "📋 Classroom Summary"
-            )
-
-            display_summary = classroom_summary.rename(
-                columns={
-                    "classroom": "Classroom",
-                    "Average_Engagement":
-                        "Average Engagement"
-                }
-            )
-
-            display_summary[
-                "Average Engagement"
-            ] = (
-                display_summary[
-                    "Average Engagement"
-                ]
-                .astype(str)
-                + "%"
+            classroom_df = pd.DataFrame(
+                classrooms
             )
 
             st.dataframe(
-                display_summary,
-                width="stretch",
+                classroom_df,
+                use_container_width=True,
                 hide_index=True
             )
 
+
+# ============================================================
+# SESSION HISTORY PAGE
+# ============================================================
+
 elif page == "Session History":
 
-    st.title("🕒 Session History")
-    st.info(
-        "Session History will be implemented next."
-    )
+    st.header("Session History")
+
+    sessions = get_sessions_safe()
+
+    if not sessions:
+
+        st.warning("No sessions have been created.")
+
+    else:
+
+        session_rows = []
+
+        for session in sessions:
+
+            session_id = session[0]
+
+            session_records = pd.DataFrame()
+
+            if not data.empty:
+                session_records = data[
+                    data["session_id"] == session_id
+                ]
+
+            if session_records.empty:
+                avg_engagement = 0
+                record_count = 0
+            else:
+                avg_engagement = (
+                    session_records[
+                        "engagement_score"
+                    ].mean()
+                )
+
+                record_count = len(session_records)
+
+            session_rows.append(
+                {
+                    "Session ID": session_id,
+                    "Unit": (
+                        session[1]
+                        if len(session) > 1
+                        else ""
+                    ),
+                    "Unit Name": (
+                        session[2]
+                        if len(session) > 2
+                        else ""
+                    ),
+                    "Classroom": (
+                        session[3]
+                        if len(session) > 3
+                        else ""
+                    ),
+                    "Started": (
+                        session[4]
+                        if len(session) > 4
+                        else ""
+                    ),
+                    "Ended": (
+                        session[5]
+                        if len(session) > 5
+                        else ""
+                    ),
+                    "Records": record_count,
+                    "Average Engagement": round(
+                        avg_engagement,
+                        2
+                    )
+                }
+            )
+
+        session_df = pd.DataFrame(session_rows)
+
+        st.dataframe(
+            session_df,
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.divider()
+
+st.caption(
+    "CEMS — Classroom Engagement Monitoring System | "
+    "SQLite + Python + Streamlit"
+)
