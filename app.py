@@ -33,7 +33,7 @@ if "show_analytics" not in st.session_state:
 
 def launch_python_script(script_path):
     """
-    Launch Python/OpenCV components such as face registration
+    Launch Python/OpenCV programs such as face registration
     and live monitoring in a separate Windows console.
     """
 
@@ -41,33 +41,53 @@ def launch_python_script(script_path):
         full_path = BASE_DIR / script_path
 
         if not full_path.exists():
-            st.error(f"Could not find {script_path}")
+            st.error(
+                f"Could not find {script_path}"
+            )
             return
 
+        venv_python = (
+            BASE_DIR
+            / ".venv"
+            / "Scripts"
+            / "python.exe"
+        )
+
+        python_executable = (
+            str(venv_python)
+            if venv_python.exists()
+            else sys.executable
+        )
+
         if sys.platform.startswith("win"):
+
             subprocess.Popen(
                 [
                     "cmd.exe",
                     "/k",
-                    sys.executable,
+                    python_executable,
                     str(full_path)
                 ],
-                cwd=str(BASE_DIR)
+                cwd=str(BASE_DIR),
+                creationflags=subprocess.CREATE_NEW_CONSOLE
             )
+
         else:
+
             subprocess.Popen(
                 [
-                    sys.executable,
+                    python_executable,
                     str(full_path)
                 ],
                 cwd=str(BASE_DIR)
             )
 
         st.success(
-            f"Started {script_path} in a new window."
+            f"Started {script_path}."
         )
 
     except Exception as error:
+
         st.error(
             f"Could not start {script_path}: {error}"
         )
